@@ -1,75 +1,2733 @@
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: dark;
-  color: rgba(255, 255, 255, 0.87);
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+﻿* {
+    box-sizing: border-box;
 }
-main {
-    width: 50vw;
-    height: 50vh;
-    -webkit-backdrop-filter: blur(1rem);
-    backdrop-filter: blur(1rem);
-    background-color:transparent;
-    border-radius: 10px;
+
+html {
+    font-size: 18px;
+}
+
+/* Para monitores 2K (QHD) - Aumenta base em 1.5x */
+@media screen and (min-width: 2560px) {
+    html {
+        font-size: 24px;
+    }
+}
+
+/* Para monitores 4K (UHD) - Aumenta base em 2x */
+@media screen and (min-width: 3840px) {
+    html {
+        font-size: 32px;
+    }
+}
+
+@font-face {
+    font-family: 'Sovngarde';
+    src: url('./fonts/Sovngarde Light.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Sovngarde';
+    src: url('./fonts/Sovngarde Bold.ttf') format('truetype');
+    font-weight: bold;
+    font-style: normal;
+}
+
+/* ========================================================= */
+/* CONFIGURAÇÃO DE ÍCONES E SVGs                             */
+/* ========================================================= */
+
+@keyframes iconPopIn {
+    0% {
+        opacity: 0;
+        transform: scale(0.3);
+    }
+
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.inline-svg-wrapper {
     display: flex;
     justify-content: center;
     align-items: center;
+    background: transparent !important;
+    filter: none !important;
+}
+
+    .inline-svg-wrapper svg,
+    .inline-svg-wrapper img {
+        width: 100%;
+        height: 100%;
+        fill: currentColor;
+        object-fit: contain;
+        background: transparent !important;
+        overflow: visible;
+        animation: iconPopIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    }
+
+.skill-icon-container .inline-svg-wrapper svg {
+    color: var(--glow-color);
+}
+
+    .skill-icon-container .inline-svg-wrapper svg path,
+    .skill-icon-container .inline-svg-wrapper svg rect,
+    .skill-icon-container .inline-svg-wrapper svg circle,
+    .skill-icon-container .inline-svg-wrapper svg polygon {
+        fill: currentColor;
+    }
+
+.perk-node-acquired .inline-svg-wrapper svg {
+    color: var(--tree-glow);
+}
+
+    .perk-node-acquired .inline-svg-wrapper svg path,
+    .perk-node-acquired .inline-svg-wrapper svg rect,
+    .perk-node-acquired .inline-svg-wrapper svg circle,
+    .perk-node-acquired .inline-svg-wrapper svg polygon {
+        fill: currentColor;
+    }
+
+body {
+    margin: 0;
+    overflow: hidden;
+    background: transparent;
+    font-family: 'Sovngarde', 'Futura', 'Arial', sans-serif;
+}
+
+.app-container {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    background: rgba(0, 0, 0, 0.6);
+    position: relative;
+}
+
+/* ========================================================= */
+/* SKYRIM STYLE HEADER                                       */
+/* ========================================================= */
+
+.skyrim-header {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    padding: 40px 40px; /* Ajustado para ficar mais compacto */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    color: white;
+    z-index: 400;
+    pointer-events: none;
+    background: #000000;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    opacity: 0;
+    transform: translateY(-20px);
+    transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+}
+
+.loaded .skyrim-header {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.header-top-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 80px;
+    margin-bottom: 25px;
+    width: 100%;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    border-top: 1px solid rgba(255,255,255,0.1);
+    padding: 10px 0;
+}
+
+.diamond-separator {
+    width: 24px;
+    height: 24px;
+    color: white;
+}
+
+.header-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    letter-spacing: 2px;
+}
+
+.header-label {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.75rem;
+}
+
+.header-value {
+    font-size: 1.1rem;
+    font-weight: bold;
+}
+
+.header-level-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.level-bar-wrapper {
+    position: relative;
+    width: 100px;
+    height: 12px;
+}
+
+.header-bottom-row {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 30px;
+    width: 90%;
+    max-width: 80vw;
+    margin: 0 auto;
+    position: relative;
+}
+
+.stat-container {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    font-size: 0.85rem;
+    letter-spacing: 2px;
+}
+
+    .stat-container:nth-child(1) {
+        justify-content: flex-end;
+    }
+
+    .stat-container:nth-child(2) {
+        justify-content: center;
+    }
+
+    .stat-container:nth-child(3) {
+        justify-content: flex-start;
+    }
+
+.stat-label {
+    color: rgba(255,255,255,0.7);
+    min-width: 80px;
+    text-align: right;
+}
+
+.stat-value {
+    font-weight: bold;
+    min-width: 60px;
+}
+
+/* ========================================================= */
+/* LÓGICA DAS BARRAS COM SVGS                                */
+/* ========================================================= */
+
+.stat-bar-wrapper {
+    position: relative;
+}
+
+    .stat-bar-wrapper.main-bar {
+        width: 300px;
+        height: 20px;
+    }
+
+    .stat-bar-wrapper.mini-bar {
+        width: 120px;
+        height: 12px;
+    }
+
+.bar-fill {
+    position: absolute;
+    left: 0;
+    z-index: 3;
+    transition: width 0.3s ease;
+}
+
+.level-bar-wrapper .bar-fill {
+    top: 50%;
+    transform: translateY(-50%);
+    height: 55%;
+    left: 9px;
+    max-width: 81%;
+}
+
+.main-bar .bar-fill {
+    top: 50%;
+    transform: translateY(-50%);
+    height: 55%;
+    left: 28px;
+    max-width: 81%;
+}
+
+.mini-bar .bar-fill {
+    top: 50%;
+    transform: translateY(-50%);
+    height: 55%;
+    left: 11px;
+    max-width: 81%;
+}
+
+.red-fill {
+    background: linear-gradient(90deg, #500 0%, #d32f2f 100%);
+}
+
+.blue-fill {
+    background: linear-gradient(90deg, #002255 0%, #1976d2 100%);
+}
+
+.green-fill {
+    background: linear-gradient(90deg, #004411 0%, #388e3c 100%);
+}
+
+.cyan-fill {
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.3) 0%, rgba(255, 255, 255, 0.1) 45%, rgba(255, 255, 255, 0.1) 55%, rgba(0, 0, 0, 0.4) 100% ), linear-gradient(to right, #bcbdbc, #9ba9bb, #7a8ea8);
+}
+
+.bar-frame-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 2;
+    pointer-events: none;
+    object-fit: fill;
+}
+
+.header-center-diamond {
+    margin-top: -12px;
+    background: #000;
+    padding: 0 5px;
+}
+
+/* ========================================================= */
+/* GRID DE SKILLS INFERIOR (BOTTOM)                          */
+/* ========================================================= */
+
+.bottom-skills-grid {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 200px;
+    display: grid;
+    grid-template-rows: repeat(4, 1fr);
+    grid-auto-flow: column;
+    gap: 8px 30px;
+    padding: 20px 80px;
+    background: linear-gradient(to top, rgba(0,0,0,0.95) 40%, rgba(0,0,0,0.5) 80%, transparent 100%);
+    z-index: 40;
+    justify-content: center;
+    align-content: end;
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.5s ease-out 0.2s, transform 0.5s ease-out 0.2s;
+}
+
+.loaded .bottom-skills-grid {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.bottom-grid-item {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 15px;
+    cursor: pointer;
+    transition: transform 0.2s, filter 0.2s;
+}
+
+    .bottom-grid-item:hover {
+        transform: scale(1.05);
+    }
+
+.bottom-grid-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: white;
+}
+
+.grid-skill-name {
+    font-size: 0.75rem;
+    letter-spacing: 2px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.grid-skill-level {
+    font-size: 1.1rem;
+    font-weight: bold;
+}
+
+/* ========================================================= */
+/* CARROSSEL PRINCIPAL (SKILL COLUMNS)                       */
+/* ========================================================= */
+
+.fullscreen-overlay {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.5s ease;
+}
+
+    .fullscreen-overlay.overlay-hidden {
+        transform: scale(1.05) translateY(10vh);
+        opacity: 0;
+        pointer-events: none;
+    }
+
+.skills-infinite-container {
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
+    cursor: grab;
+    user-select: none;
+    will-change: scroll-position;
+    opacity: 0;
+    transform: scale(0.97);
+    transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.1s, transform 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.1s;
+}
+
+.loaded .skills-infinite-container {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.skills-infinite-container.grabbing {
+    cursor: grabbing;
+}
+
+.skills-columns-track {
+    display: flex;
+    height: 100%;
+    transform: translateZ(0);
+}
+
+.skill-column {
+    width: 20vw;
+    min-width: 400px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    position: relative;
+    background-color: transparent;
+    padding-bottom: calc(220px + 5vh);
+    cursor: pointer;
+    transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.skills-columns-track:hover .skill-column,
+.skills-columns-track.has-forced-hover .skill-column {
+    transform: translateX(-60px);
+}
+
+.skills-columns-track .embla__slide:hover .skill-column,
+.skills-columns-track .embla__slide.is-forced-hover .skill-column {
+    transform: scale(1.3) translateX(0);
+    z-index: 11;
+}
+
+.skills-columns-track .embla__slide:hover ~ .embla__slide .skill-column,
+.skills-columns-track .embla__slide.is-forced-hover ~ .embla__slide .skill-column {
+    transform: translateX(60px);
+}
+
+.skill-column:hover .column-bg-image,
+.skill-column.forced-hover .column-bg-image {
+    opacity: 1.0;
+    filter: brightness(1.0);
+    transform: scale(0.6);
+}
+
+.column-border {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    width: 30px;
+    z-index: 5;
+    pointer-events: none;
+}
+
+    .column-border.border-left {
+        left: 0;
+    }
+
+    .column-border.border-right {
+        right: 0;
+    }
+
+.column-bg-image {
+    position: absolute;
+    bottom: 0;
+    left: 15px;
+    right: 15px;
+    height: 65%;
+    opacity: 0.6;
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0;
+    transform: scale(1.05);
+    transition: opacity 0.6s ease 0.2s, transform 0.6s ease 0.2s, filter 0.4s ease;
+}
+
+.loaded .column-bg-image {
+    opacity: 0.6;
+    transform: scale(1);
+}
+
+.loaded .skill-column:hover .column-bg-image,
+.loaded .skill-column.forced-hover .column-bg-image {
+    opacity: 1.0;
+    filter: brightness(1.0);
+    transform: scale(0.6);
+    transition: opacity 0.4s ease, filter 0.4s ease, transform 0.4s ease;
+}
+
+.column-text-gradient {
+    position: absolute;
+    bottom: 0;
+    left: 15px;
+    right: 15px;
+    height: 40%;
+
+    z-index: 2;
+    pointer-events: none;
+}
+
+.column-content {
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.5s ease-out 0.3s, transform 0.3s ease-out;
+}
+
+.loaded .column-content {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.skill-column:hover .column-content,
+.skill-column.forced-hover .column-content {
+    transform: translateY(-40px) 
+}
+
+.skill-icon-container {
+    width: 120px;
+    height: 120px;
+}
+
+.skill-icon {
+    width: 100%;
+    color: var(--glow-color);
+}
+
+    .skill-icon svg path,
+    .skill-icon svg rect,
+    .skill-icon svg circle,
+    .skill-icon svg polygon {
+        fill: currentColor;
+    }
+
+.skill-info-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 30px;
+    gap: 8px;
+}
+
+.skill-info {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.skill-name {
+    color: white;
+    font-size: 1.5rem;
+    letter-spacing: 6px;
+    text-shadow: 0 0 10px black;
+}
+
+.skill-level {
+    color: white;
+    font-size: 2.5rem;
+    font-weight: bold;
+    text-shadow: 0 0 10px black;
+}
+
+.column-tree-preview {
+    position: absolute;
+    top: 15%;
+    left: 0;
+    width: 100%;
+    height: 60%;
+    z-index: -2;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.8s ease 0.5s;
+}
+
+.loaded .column-tree-preview {
+    opacity: 0.46;
+}
+
+.skill-column:hover .column-tree-preview,
+.skill-column.forced-hover .column-tree-preview {
+    opacity: 1.0;
+    transform: scale(1.05);
+}
+
+/* ========================================================= */
+/* FILE MANAGER                                              */
+/* ========================================================= */
+
+.browser-item {
+    padding: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    cursor: pointer;
+    font-size: 1.1rem;
+    transition: background 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #ccc;
+}
+
+    .browser-item:hover {
+        background: rgba(255,255,255,0.1);
+        color: white;
+    }
+
+    .browser-item.folder {
+        color: #ffd700;
+    }
+
+/* ========================================================= */
+/* MODO EDITOR E OVERLAYS RESTANTES                          */
+/* ========================================================= */
+
+.editor-toolbar {
+    position: absolute;
+    top: 100px;
+    right: 30px;
+    display: flex;
+    gap: 15px;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.4s ease 0.3s;
+}
+
+.loaded .editor-toolbar {
+    opacity: 1;
+}
+
+.editor-btn {
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: 1px solid rgba(255,255,255,0.4);
+    padding: 10px 20px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+    .editor-btn:hover {
+        border-color: white;
+    }
+
+    .editor-btn.active {
+        border-color: #ffd700;
+        color: #ffd700;
+    }
+
+    .editor-btn.save-btn {
+        border-color: #4caf50;
+        color: #4caf50;
+    }
+
+        .editor-btn.save-btn:hover {
+            background: rgba(76, 175, 80, 0.15);
+            border-color: #81c784;
+            color: #81c784;
+        }
+
+.editor-mode-active .perk-node-container {
+    cursor: grab !important;
+}
+
+
+    .editor-mode-active .perk-node-container:active {
+        cursor: grabbing !important;
+    }
+
+.skill-tree-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 300;
+    color: white;
+    animation: expandTree 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.close-tree-btn {
+    position: fixed;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    /* Remove estilos de botão padrão */
+    background: transparent;
+    border: none;
+    padding: 0;
+    /* Define tamanho do ícone */
+    width: 64px;
+    height: 64px;
+    cursor: pointer;
+    z-index: 110;
+    opacity: 0.7;
+    transition: all 0.3s ease;
+    /* Garante que o clique não deixe outline feio */
+    outline: none;
+}
+
+    /* Estilo da imagem dentro do botão */
+    .close-tree-btn img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        filter: drop-shadow(0 0 2px rgba(0,0,0,0.8)); /* Sombra leve para contraste */
+    }
+
+    /* Efeito de Hover */
+    .close-tree-btn:hover {
+        opacity: 1;
+        transform: translateX(-50%) scale(1.15); /* Aumenta um pouco ao passar o mouse */
+        filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.4)); /* Glow sutil */
+    }
+
+    /* Efeito de Clique */
+    .close-tree-btn:active {
+        transform: translateX(-50%) scale(0.95);
+    }
+
+.tree-detail-slider {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+    cursor: grab;
+}
+
+/* ========================================================= */
+/* ESTRUTURA DA TELA DE DETALHES DA ÁRVORE (CANVAS)          */
+/* ========================================================= */
+
+.skill-detail-bg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-size: auto 85%;
+    background-position: center bottom;
+    background-repeat: no-repeat;
+    opacity: 0.3;
+    z-index: 1;
+    pointer-events: none;
+}
+
+.skill-detail-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.tree-connections {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 3;
+    pointer-events: none;
+    overflow: visible;
+}
+
+.zoom-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 4;
+}
+
+.tree-title {
+    position: absolute;
+    bottom: 120px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    z-index: 2;
+    pointer-events: none;
+}
+
+    .tree-title h1 {
+        font-size: 3rem;
+        letter-spacing: 5px;
+        margin: 0 0 10px 0;
+        text-shadow: 0 0 20px var(--tree-glow);
+    }
+    .tree-title h1,
+    .tree-title .legendary-btn-container {
+        pointer-events: auto;
+    }
+
+.tree-divider {
+    height: 2px;
+    width: 300px;
+
+    margin: 0 auto;
+}
+
+.constellation-container {
+    position: relative;
+    width: 100%;
+    max-width: 80vw;
+    height: 60vh;
+    margin-top: -10vh;
+}
+
+.constellation-lines line,
+.tree-connections line {
+    stroke-opacity: 0.9 ;
+    stroke-width: 4px ;
+    transition: stroke 0.5s ease, stroke-opacity 0.5s ease, stroke-width 0.3s ease;
+}
+
+.perk-connection-line {
+    transform: translateZ(0);
+}
+
+.line-locked {
+    stroke: rgba(255, 255, 255, 0.1);
+    stroke-width: 2;
+}
+
+.line-progressing {
+    stroke: var(--tree-glow);
+    stroke-width: 3;
+    stroke-dasharray: 6 12;
+    animation: flowEnergy 1s linear infinite;
+    opacity: 0.7;
+}
+
+.line-active-base {
+    stroke: var(--tree-glow);
+    stroke-width: 4;
+    opacity: 1;
+}
+
+.line-active-glow {
+    stroke: var(--tree-glow);
+    stroke-width: 8;
+    animation: pulseOpacity 2s ease-in-out infinite alternate;
+}
+
+@keyframes flowEnergy {
+    to {
+        stroke-dashoffset: -18;
+    }
+}
+
+@keyframes pulseOpacity {
+    from {
+        opacity: 0.3;
+    }
+
+    to {
+        opacity: 0.8;
+    }
+}
+
+@keyframes expandTree {
+    from {
+        opacity: 0;
+        transform: scale(0.8) translateY(10vh);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.perk-node-container {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    width: 32px;
+    height: 32px;
+    display: flex;
+    transform-origin: center center;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    z-index: 5;
+    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), z-index 0s;
+}
+
+.perk-icon-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    transition: all 0.3s;
+}
+
+.perk-node-locked .perk-icon-img {
+    opacity: 0.3;
+    filter: grayscale(100%);
+}
+
+.perk-node-unlocked .perk-icon-img {
+    opacity: 1;
+}
+
+.perk-node-unlocked:hover .perk-icon-img {
+    transform: scale(1.5);
+    color: var(--glow-color);
+    z-index: 10;
+}
+
+
+    .perk-node-acquired .perk-icon-img {
+        color: var(--tree-glow);
+    }
+
+        .perk-node-acquired .perk-icon-img svg path,
+        .perk-node-acquired .perk-icon-img svg rect,
+        .perk-node-acquired .perk-icon-img svg circle,
+        .perk-node-acquired .perk-icon-img svg polygon {
+            fill: currentColor;
+        }
+
+/* --- ESTILO PARA PERKS ADQUIRIDOS (QUALQUER NÍVEL) --- */
+.perk-node-acquired {
+    width: 50px;
+    height: 50px;
+    z-index: 6;
+    background: transparent !important; /* Remove o glow (gradiente radial) */
+    border-radius: 50%;
+}
+.perk-node-maxed{
+    width: 50px;
+    height: 50px;
+    z-index: 6;
+    background: transparent !important; /* Remove o glow (gradiente radial) */
+    border-radius: 50%;
+}
+
+    /* Garante que o ícone do perk adquirido (mas não maxeado) seja BRANCO */
+    .perk-node-acquired .perk-icon-img svg * {
+        fill: #ffffff !important; /* Força a cor branca */
+    }
+
+/* Mantém a cor da árvore APENAS para o perk que estiver MAXEADO */
+.perk-node-maxed .perk-icon-img svg * {
+    fill: var(--tree-glow) !important;
+}
+
+.perk-node-container.forced-hover, .perk-node-container:hover {
+    transform: translate(-50%, -50%) scale(1.2);
+    z-index: 10;
+}
+
+    .perk-node-container.forced-hover .perk-icon-img {
+        transform: scale(1.5);
+        color: var(--glow-color);
+    }
+
+.preview-mode .perk-connection-line {
+    animation: none !important;
+    filter: none !important;
+}
+
+.preview-mode .line-progressing {
+    stroke-dasharray: none;
+    opacity: 0.3;
+    stroke-width: 2;
+}
+
+.preview-mode .line-active {
+    opacity: 0.5;
+    stroke-width: 2;
+}
+
+.preview-mode .perk-icon-img {
+    filter: none !important;
+    transform: scale(0.6) !important;
+    opacity: 0.4 !important;
+    background-color: transparent !important;
+    object-position: center !important;
+}
+
+.perk-tooltip {
+    position: absolute;
+    min-width: 280px;
+    width: 20vw;
+    max-width: 400px;
+    background: rgba(10, 10, 10, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 15px;
+    z-index: 150;
+    pointer-events: none;
+}
+
+.tooltip-header h2 {
+    margin: 0;
+    font-size: 1.4rem;
+    color: white;
+    font-weight: normal;
+    letter-spacing: 1px;
+}
+
+.tooltip-divider {
+    height: 1px;
+    background: linear-gradient(90deg, rgba(255,255,255,0.5), transparent);
+    margin: 8px 0 12px 0;
+}
+
+.tooltip-desc {
+    font-size: 1.2rem;
+    color: #ccc;
+    line-height: 1.4;
+    margin: 0 0 15px 0;
+}
+
+.tooltip-req {
+    font-size: 0.9rem;
+    color: #a0a0a0;
+    font-weight: bold;
+    text-align: right;
+}
+
+    .tooltip-req .req-met {
+        color: #4caf50;
+    }
+
+    .tooltip-req .req-unmet {
+        color: #f44336;
+    }
+
+/* ========================================================= */
+/* MODALS (LEVEL UP & PERK CONFIRM)                          */
+/* ========================================================= */
+
+.skyrim-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 1000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    animation: fadeInModal 0.3s ease-out forwards;
+}
+
+.skyrim-modal-content {
+    background: radial-gradient(circle, rgba(20,20,25,1) 0%, rgba(5,5,5,1) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 30px 40px;
+    text-align: center;
+    color: white;
+    min-width: 400px;
+}
+
+    .skyrim-modal-content h2 {
+        font-size: 2rem;
+        letter-spacing: 4px;
+        margin: 0 0 10px 0;
+    }
+
+    .skyrim-modal-content p {
+        font-size: 1.2rem;
+        color: #ccc;
+        margin-bottom: 30px;
+    }
+
+.modal-actions {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+}
+
+.modal-btn {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.3);
+    color: white;
+    padding: 10px 30px;
+    font-size: 1.3rem;
+    font-family: 'Sovngarde', sans-serif;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 2px;
+}
+
+    .modal-btn:hover {
+        background: rgba(255,255,255,0.1);
+        border-color: white;
+        transform: scale(1.05);
+    }
+
+.level-up-options {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.attribute-btn {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.2);
+    padding: 15px;
+    font-size: 1.5rem;
+    font-family: 'Sovngarde', sans-serif;
+    color: white;
+    letter-spacing: 4px;
+    cursor: pointer;
+    transition: all 0.3s;
+    position: relative;
+    overflow: hidden;
+}
+
+    .attribute-btn:hover {
+        border-color: white;
+        transform: scale(1.02);
+    }
+
+    .attribute-btn.magicka:hover {
+        text-shadow: 0 0 10px #4dd0e1;
+    }
+
+    .attribute-btn.health:hover {
+        text-shadow: 0 0 10px #e57373;
+    }
+
+    .attribute-btn.stamina:hover {
+        text-shadow: 0 0 10px #81c784;
+    }
+
+@keyframes fadeInModal {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* ========================================================= */
+/* CATEGORY FILTER (FILTRO DE CATEGORIAS)                    */
+/* ========================================================= */
+
+.category-filter-container {
+    position: absolute;
+    bottom: 200px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 15px;
+    z-index: 80;
+    opacity: 0;
+    transition: opacity 0.5s ease 0.3s;
+}
+
+.loaded .category-filter-container {
+    opacity: 1;
+}
+
+.category-btn {
+    background: rgba(0, 0, 0, 0.6);
+    color: rgba(255, 255, 255, 0.5);
+    border: 1px solid transparent;
+    border-bottom: 2px solid transparent;
+    font-family: 'Sovngarde', sans-serif;
+    font-size: 1rem;
+    letter-spacing: 3px;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+    .category-btn:hover {
+        color: white;
+        background: rgba(0, 0, 0, 0.8);
+        transform: translateY(-2px);
+    }
+
+    .category-btn.active {
+        color: white;
+        background: rgba(0, 0, 0, 0.9);
+        border-bottom: 2px solid white;
+    }
+
+/* ========================================================= */
+/* ANIMAÇÕES DE SAÍDA (EXIT)                                 */
+/* ========================================================= */
+
+.app-container.exiting .skyrim-header {
+    opacity: 0;
+    transform: translateY(-20px);
+    transition: opacity 0.4s ease-in, transform 0.4s ease-in;
+}
+
+.app-container.exiting .skills-infinite-container {
+    opacity: 0;
+    transform: scale(0.95);
+    transition: opacity 0.4s ease-in, transform 0.4s ease-in;
+}
+
+.app-container.exiting .bottom-skills-grid {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.3s ease-in, transform 0.3s ease-in;
+}
+
+.app-container.exiting .category-filter-container {
+    opacity: 0;
+    transition: opacity 0.2s ease-in;
+}
+
+.app-container.exiting .editor-toolbar {
+    opacity: 0;
+    transition: opacity 0.2s ease-in;
+}
+
+.app-container.exiting {
+    background: rgba(0, 0, 0, 0);
+    transition: background 0.5s ease-in;
+}
+
+/* ========================================================= */
+/* CODE INPUT CONTAINER                                      */
+/* ========================================================= */
+.code-input-container {
+    position: absolute;
+    bottom: 40px;
+    right: 40px;
+    display: flex;
+    gap: 10px;
+    z-index: 150;
+    opacity: 0;
+    transition: opacity 0.5s ease 0.3s;
+}
+
+.loaded .code-input-container {
+    opacity: 1;
+}
+
+.app-container.exiting .code-input-container {
+    opacity: 0;
+}
+
+.code-input-container input {
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    padding: 8px 15px;
+    font-family: 'Sovngarde', sans-serif;
+    font-size: 1rem;
+    outline: none;
+    letter-spacing: 2px;
+    width: 200px;
+    transition: all 0.2s;
+}
+
+    .code-input-container input:focus {
+        border-color: #ffd700;
+    }
+
+.code-input-container button {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    padding: 8px 15px;
+    font-family: 'Sovngarde', sans-serif;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 2px;
+}
+
+    .code-input-container button:hover {
+        background: rgba(255,255,255,0.1);
+        border-color: white;
+    }
+
+/* ========================================================= */
+/* ADVANCED LEVEL UP MODAL                                   */
+/* ========================================================= */
+.level-up-modal-advanced {
+    min-width: 1000px;
+    max-width: 1200px;
+}
+
+.level-up-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+}
+
+    .level-up-layout h3 {
+        font-size: 1.1rem;
+        color: #ffd700;
+        letter-spacing: 2px;
+        border-bottom: 1px solid rgba(255,255,255,0.2);
+        padding-bottom: 10px;
+        margin-bottom: 15px;
+        text-align: left;
+    }
+
+.level-up-category-filters {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.level-up-category-btn {
+    background: rgba(0, 0, 0, 0.4);
+    color: rgba(255, 255, 255, 0.5);
+    border: 1px solid transparent;
+    border-bottom: 2px solid transparent;
+    font-family: 'Sovngarde', sans-serif;
+    font-size: 0.9rem;
+    letter-spacing: 2px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: all 0.3s;
+    border-radius: 4px;
+}
+
+    .level-up-category-btn:hover {
+        color: white;
+        background: rgba(0, 0, 0, 0.8);
+    }
+
+    .level-up-category-btn.active {
+        color: white;
+        background: rgba(0, 0, 0, 0.9);
+        border-bottom: 2px solid white;
+    }
+
+.allocation-list-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 15px;
+    max-height: 400px;
+    overflow-y: auto;
+    padding-right: 10px;
+    align-content: start;
+}
+
+    .allocation-list-grid::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    .allocation-list-grid::-webkit-scrollbar-thumb {
+        background: rgba(255,255,255,0.3);
+        border-radius: 4px;
+    }
+
+.allocation-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255,255,255,0.05);
+    padding: 10px;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+}
+
+.alloc-info {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.alloc-name {
+    font-size: 0.8rem;
+    color: #ccc;
+    letter-spacing: 1px;
+}
+
+.alloc-level {
+    font-size: 1.1rem;
+    font-weight: bold;
+    color: white;
+    margin-top: 2px;
+}
+
+.alloc-plus {
+    color: #4caf50;
+    font-size: 0.9rem;
+    margin-left: 5px;
+}
+
+.alloc-controls {
+    display: flex;
+    gap: 5px;
+}
+
+    .alloc-controls button {
+        background: rgba(0,0,0,0.5);
+        color: white;
+        border: 1px solid rgba(255,255,255,0.3);
+        width: 28px;
+        height: 28px;
+        font-size: 1.1rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        border-radius: 4px;
+    }
+
+        .alloc-controls button:hover:not(:disabled) {
+            background: rgba(255,255,255,0.2);
+            border-color: white;
+        }
+
+        .alloc-controls button:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+.level-up-options-row {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+}
+
+.attribute-btn {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.2);
+    padding: 15px 25px;
+    font-size: 1.2rem;
+    font-family: 'Sovngarde', sans-serif;
+    color: white;
+    letter-spacing: 3px;
+    cursor: pointer;
+    transition: all 0.3s;
+    border-radius: 6px;
+    position: relative;
+    overflow: hidden;
+}
+
+    .attribute-btn:hover {
+        border-color: white;
+        transform: scale(1.02);
+    }
+
+    .attribute-btn.magicka:hover {
+        text-shadow: 0 0 10px #4dd0e1;
+    }
+
+    .attribute-btn.health:hover {
+        text-shadow: 0 0 10px #e57373;
+    }
+
+    .attribute-btn.stamina:hover {
+        text-shadow: 0 0 10px #81c784;
+    }
+
+    .attribute-btn.selected-attr {
+        border-color: white;
+        background: rgba(255,255,255,0.15);
+        transform: scale(1.05);
+    }
+
+.disabled-btn {
+    opacity: 0.3;
+    cursor: not-allowed !important;
+}
+
+/* ========================================================= */
+/* SETTINGS MODAL UI (ADVANCED)                              */
+/* ========================================================= */
+.settings-modal-content.ui-mode {
+    min-width: 800px;
+    max-width: 900px;
+    max-height: 90vh;
+    display: flex;
     flex-direction: column;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+.settings-modal-content h2 {
+    font-size: 2.2rem;
+    text-align: center;
+    margin-bottom: 25px;
 }
 
-body {
-  margin: 0;
-  display:flex;
-  width:100vw;
-  height: 100vh;
-  justify-content:center;
-  align-items:center;
+.settings-tabs {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    margin-bottom: 10px;
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+    .settings-tabs button {
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: rgba(255, 255, 255, 0.6);
+        padding: 10px 20px;
+        font-family: 'Sovngarde', sans-serif;
+        font-size: 1rem;
+        letter-spacing: 2px;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+        .settings-tabs button:hover {
+            color: white;
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+
+        .settings-tabs button.active {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffd700;
+            border-color: #ffd700;
+        }
+
+.settings-tab-content {
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 10px;
+    text-align: left;
+    min-height: 400px;
+    max-height: 500px;
 }
 
-.card {
-  padding: 2em;
+    .settings-tab-content::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    .settings-tab-content::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 4px;
+    }
+
+.settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+}
+
+    .settings-grid label {
+        font-size: 1.15rem;
+        display: flex;
+        flex-direction: column;
+        color: #ccc;
+        letter-spacing: 1px;
+    }
+
+    .settings-grid input[type="number"],
+    .settings-grid input[type="text"] {
+        margin-top: 5px;
+        background: rgba(0, 0, 0, 0.5);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        color: white;
+        padding: 8px 12px;
+        font-family: 'Sovngarde', sans-serif;
+        outline: none;
+        transition: border-color 0.2s;
+    }
+
+    .settings-grid input:focus {
+        border-color: #ffd700;
+    }
+
+.checkbox-label {
+    flex-direction: row !important;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+}
+
+    .checkbox-label input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+    }
+
+.settings-modal-content {
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+    .settings-modal-content::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    .settings-modal-content::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 4px;
+    }
+
+    .settings-modal-content::-webkit-scrollbar-thumb {
+        background: rgba(77, 208, 225, 0.4);
+        border-radius: 4px;
+    }
+
+        .settings-modal-content::-webkit-scrollbar-thumb:hover {
+            background: rgba(77, 208, 225, 0.8);
+        }
+
+.dynamic-list-container {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.tab-desc {
+    font-size: 0.9rem !important;
+    color: #a0a0a0 !important;
+    margin-bottom: 5px !important;
+    text-align: center;
+}
+
+.dynamic-card {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    padding: 15px;
+    border-radius: 4px;
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 10px;
+}
+
+    .card-header h4 {
+        margin: 0;
+        color: #ffd700;
+        letter-spacing: 2px;
+    }
+
+.inline-input {
+    background: rgba(0,0,0,0.5);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: white;
+    font-family: 'Sovngarde', sans-serif;
+    padding: 4px 8px;
+    text-align: center;
+}
+
+.code-title-input {
+    background: transparent !important;
+    border: none !important;
+    border-bottom: 1px solid white !important;
+    color: #4dd0e1 !important;
+    font-size: 1.2rem;
+    padding: 0 5px !important;
+    letter-spacing: 2px;
+    width: 250px;
+}
+
+.delete-btn {
+    background: rgba(244, 67, 54, 0.2);
+    border: 1px solid rgba(244, 67, 54, 0.5);
+    color: #ffcdd2;
+    padding: 5px 10px;
+    font-family: 'Sovngarde', sans-serif;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+    .delete-btn:hover {
+        background: rgba(244, 67, 54, 0.5);
+        color: white;
+    }
+
+.add-btn {
+    background: rgba(76, 175, 80, 0.2);
+    border: 1px dashed rgba(76, 175, 80, 0.6);
+    color: #c8e6c9;
+    padding: 12px;
+    font-family: 'Sovngarde', sans-serif;
+    font-size: 1rem;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 10px;
+}
+
+    .add-btn:hover {
+        background: rgba(76, 175, 80, 0.4);
+        color: white;
+    }
+
+.compact-grid {
+    gap: 10px;
+}
+
+    .compact-grid label {
+        font-size: 0.8rem;
+    }
+
+.rewards-title {
+    margin: 10px 0 0 0;
+    color: #4caf50;
+    font-size: 0.9rem;
+    letter-spacing: 1px;
+    border-bottom: 1px solid rgba(76, 175, 80, 0.3);
+    padding-bottom: 5px;
+}
+
+/* ========================================================= */
+/* PERK EDITOR & CONTEXT MENU                                */
+/* ========================================================= */
+
+.add-first-perk-btn {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(76, 175, 80, 0.2);
+    border: 2px dashed rgba(76, 175, 80, 0.6);
+    color: #c8e6c9;
+    padding: 20px 40px;
+    font-family: 'Sovngarde', sans-serif;
+    font-size: 1.5rem;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.3s;
+    z-index: 100;
+}
+
+    .add-first-perk-btn:hover {
+        background: rgba(76, 175, 80, 0.5);
+        color: white;
+        border-style: solid;
+    }
+
+.perk-context-menu {
+    position: absolute;
+    background: rgba(10, 10, 10, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    display: flex;
+    flex-direction: column;
+    min-width: 220px;
+    z-index: 5000;
+}
+
+    .perk-context-menu button {
+        background: transparent;
+        color: white;
+        border: none;
+        padding: 12px 15px;
+        text-align: left;
+        font-family: 'Sovngarde', sans-serif;
+        font-size: 0.9rem;
+        cursor: pointer;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        transition: background 0.2s;
+    }
+
+        .perk-context-menu button:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .perk-context-menu button.danger-text {
+            color: #ff5252;
+        }
+
+            .perk-context-menu button.danger-text:hover {
+                background: rgba(244, 67, 54, 0.2);
+            }
+
+.skyrim-select {
+    margin-top: 5px;
+    background: rgba(0, 0, 0, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    padding: 8px 12px;
+    font-family: 'Sovngarde', sans-serif;
+    outline: none;
+    width: 100%;
+    cursor: pointer;
+    font-size: 1.1rem;
+}
+
+    .skyrim-select option {
+        background: #1a1a1a;
+        color: white;
+        padding: 5px;
+    }
+
+.connecting-overlay {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(255, 215, 0, 0.3);
+    border: 2px solid #ffd700;
+    color: #ffd700;
+    padding: 15px 30px;
+    font-family: 'Sovngarde', sans-serif;
+    font-size: 1.2rem;
+    letter-spacing: 2px;
+    z-index: 1000; /* Bem alto */
+    pointer-events: none;
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    animation: pulse 1.5s infinite;
+}
+
+/* ========================================================= */
+/* LÓGICA DE ÁRVORES BLOQUEADAS E MODO SELETOR (FORM ID)     */
+/* ========================================================= */
+
+.column-locked {
+    filter: grayscale(100%);
+    cursor: not-allowed !important;
+}
+
+.bottom-locked {
+    opacity: 0.5;
+    cursor: not-allowed !important;
+}
+
+.locked-tree-overlay {
+    position: absolute;
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.85);
+    border: 1px solid rgba(255, 0, 0, 0.4);
+    padding: 20px;
+    border-radius: 8px;
+    width: 80%;
+    text-align: center;
+    z-index: 10;
+}
+
+    .locked-tree-overlay .lock-icon {
+        width: 40px;
+        height: 40px;
+        color: #ff5252;
+        margin-bottom: 10px;
+    }
+
+    .locked-tree-overlay h3 {
+        color: #ff5252;
+        font-family: 'Sovngarde', sans-serif;
+        letter-spacing: 2px;
+        margin: 0 0 15px 0;
+    }
+
+.locked-req-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-size: 0.9rem;
+    font-family: 'Sovngarde', sans-serif;
+}
+
+.req-met {
+    color: #4caf50;
+}
+
+.req-unmet {
+    color: #ff5252;
+}
+
+.form-selector-modal {
+    min-width: 700px;
+    max-width: 900px;
+    height: 600px;
+    display: flex;
+    flex-direction: column;
+}
+
+.form-search-input {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    padding: 12px 15px;
+    font-family: 'Sovngarde', sans-serif;
+    font-size: 1.1rem;
+    outline: none;
+    margin-bottom: 15px;
+}
+
+.table-container {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.form-selector-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+}
+
+    .form-selector-table th {
+        background: rgba(255, 255, 255, 0.1);
+        color: #ffd700;
+        padding: 10px;
+        position: sticky;
+        top: 0;
+    }
+
+    .form-selector-table td {
+        padding: 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        color: #ccc;
+    }
+
+    .form-selector-table tr:hover {
+        background: rgba(255, 255, 255, 0.1);
+        cursor: pointer;
+    }
+
+.form-selector-trigger-btn {
+    margin-top: 5px;
+    background: rgba(0, 0, 0, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #4dd0e1;
+    padding: 8px 12px;
+    font-family: 'Sovngarde', sans-serif;
+    width: 100%;
+    cursor: pointer;
+    text-align: left;
+    font-size: 1.1rem;
+}
+
+/* ========================================================= */
+/* EMBLA CAROUSEL CONFIGURAÇÕES                              */
+/* ========================================================= */
+.embla {
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+}
+
+.embla__container {
+    display: flex;
+    touch-action: pan-y pinch-zoom;
+    transition: none !important;
+    height: 100%;
+    align-items: center;
+    will-change: transform;
+}
+
+.embla__slide {
+    flex: 0 0 auto;
+    min-width: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+}
+
+.skills-infinite-container.embla {
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+    touch-action: pan-y pinch-zoom;
+}
+
+.single-tree-slide {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    overflow: visible;
+}
+
+/* ========================================================= */
+/* ESTILOS DOS RANKS (SUB-PERKS)                             */
+/* ========================================================= */
+.perk-ranks-indicator {
+    position: absolute;
+    bottom: -12px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center; 
+    align-items: center;
+    width: 48px;
+    gap: 3px; 
+    pointer-events: none;
+    z-index: 15;
+}
+
+.rank-dot {
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    transition: all 0.3s ease;
+    box-sizing: border-box; 
+}
+
+    .rank-dot.rank-parent {
+        /* Tamanho fixo para o primeiro rank */
+        width: 9px;
+        height: 9px;
+        flex-shrink: 0; 
+    }
+
+    .rank-dot.rank-child {
+        /* Tamanho fixo para os sub-ranks */
+        width: 5px;
+        height: 5px;
+        flex-shrink: 0;
+    }
+
+    .rank-dot.rank-unlocked {
+        background: var(--tree-glow);
+        border-color: transparent;
+        box-shadow: 0 0 4px var(--tree-glow); 
+    }
+
+    .rank-dot.rank-parent.rank-unlocked {
+        transform: scale(1.1);
+    }
+
+    .rank-dot.rank-child.rank-unlocked {
+        transform: scale(1.2);
+    }
+
+.dynamic-card {
+    font-size: 1.1rem;
+}
+
+    .dynamic-card strong {
+        font-size: 1.2rem;
+    }
+
+.dynamic-list-container h4 {
+    font-size: 1.4rem;
+}
+
+.settings-grid input,
+.settings-grid select {
+    font-size: 1.1rem !important;
+    padding: 10px !important;
+}
+
+.new-tree-btn {
+    width: 100%;
+    margin-top: 15px;
+    padding: 10px;
+    background: rgba(100, 255, 100, 0.2);
+    border: 1px solid rgba(100, 255, 100, 0.5);
+    color: white;
+    cursor: pointer;
+    font-family: 'Sovngarde', sans-serif;
+    transition: all 0.2s;
+}
+
+    .new-tree-btn:hover {
+        background: rgba(100, 255, 100, 0.4);
+    }
+
+.tree-editor-modal .form-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 15px;
+}
+
+.tree-editor-modal .browse-btn {
+    padding: 5px 15px;
+    background: #333;
+    border: 1px solid #777;
+    color: white;
+    cursor: pointer;
+}
+
+    .tree-editor-modal .browse-btn:hover {
+        background: #555;
+    }
+
+.custom-skill-mechanics {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 10px;
+    border-radius: 5px;
+    border-left: 3px solid #ffcc00;
+}
+
+/* ========================================================= */
+/* ESTILOS DE NAVEGAÇÃO DE RANKS NO TOOLTIP                  */
+/* ========================================================= */
+
+.rank-navigation {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.rank-nav-btn {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #4dd0e1;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    padding: 0;
+}
+
+    .rank-nav-btn:hover:not(:disabled) {
+        border-color: #4dd0e1;
+        background: rgba(77, 208, 225, 0.15);
+    }
+
+    .rank-nav-btn:disabled {
+        opacity: 0.15;
+        cursor: default;
+        filter: grayscale(100%);
+    }
+
+    .rank-nav-btn svg {
+        width: 14px;
+        height: 14px;
+    }
+
+.rank-pagination {
+    font-family: 'Sovngarde', sans-serif;
+    font-size: 0.8rem;
+    color: white;
+    letter-spacing: 1px;
+    min-width: 35px;
+    text-align: center;
+}
+
+/* ========================================================= */
+/* ESTILIZAÇÃO DE DROPDOWNS E BOTÕES DE BROWSE               */
+/* ========================================================= */
+
+/* Dropdowns (Selects) */
+.skyrim-select {
+    margin-top: 5px;
+    background: rgba(0, 0, 0, 0.85); /* Fundo um pouco mais escuro */
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #fff;
+    padding: 10px 35px 10px 12px;
+    font-family: 'Sovngarde', sans-serif;
+    outline: none;
+    width: fit-content; /* Altera para se ajustar ao conteúdo */
+    min-width: 180px; /* Largura mínima garantida */
+    cursor: pointer;
+    font-size: 1rem;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%234dd0e1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 18px;
+    transition: all 0.2s ease;
+}
+
+    /* Estilização básica das opções (limitada pelo navegador) */
+    .skyrim-select option {
+        background: #15151a;
+        color: #fff;
+        padding: 12px;
+    }
+
+    .skyrim-select:hover, .skyrim-select:focus {
+        border-color: #4dd0e1;
+        background-color: rgba(77, 208, 225, 0.1);
+        box-shadow: 0 0 12px rgba(77, 208, 225, 0.3);
+    }
+
+/* Container de Input com Botão Browse */
+.form-row-browse {
+    display: flex;
+    gap: 8px;
+    align-items: center; /* Garante alinhamento vertical */
+    margin-top: 5px;
+    width: 100%;
+}
+
+    .form-row-browse input {
+        flex: 1; /* Input ocupa o espaço restante */
+        margin-top: 0 !important;
+    }
+
+/* Botões de Browse e Gatilhos de Seleção */
+.browse-btn {
+    background: rgba(45, 45, 50, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #4dd0e1;
+    font-family: 'Sovngarde', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    padding: 0 15px;
+    height: 38px; /* Altura fixa para alinhar com o input */
+    white-space: nowrap;
+}
+
+.form-selector-trigger-btn {
+    background: rgba(40, 40, 45, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #4dd0e1;
+    font-family: 'Sovngarde', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    font-size: 0.9rem;
+    padding: 8px 35px 8px 12px;
+    min-height: 38px;
+    width: 100%;
+    position: relative;
+}
+
+    .form-selector-trigger-btn::after {
+        content: "🔍";
+        position: absolute;
+        right: 12px;
+        font-size: 0.85rem;
+        opacity: 0.8;
+    }
+
+    .browse-btn:hover, .form-selector-trigger-btn:hover {
+        background: rgba(77, 208, 225, 0.15);
+        border-color: #4dd0e1;
+        color: #fff;
+        box-shadow: 0 0 10px rgba(77, 208, 225, 0.3);
+    }
+
+/* Expansão da Janela do Editor (Edit Perk e Settings) */
+.settings-modal-content.ui-mode {
+    min-width: 1100px; /* Aumentado de 800-900 para 1100px */
+    max-width: 90vw;
+    max-height: 85vh;
+}
+
+/* Inputs de texto no editor */
+.settings-grid input[type="text"],
+.settings-grid input[type="number"],
+.form-search-input {
+    background: rgba(0, 0, 0, 0.7) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: white !important;
+    font-family: 'Sovngarde', sans-serif;
+    padding: 10px 12px !important;
+    transition: all 0.2s;
+    height: 38px;
+}
+
+    .settings-grid input:focus, .form-search-input:focus {
+        border-color: #4dd0e1 !important;
+        box-shadow: 0 0 8px rgba(77, 208, 225, 0.2);
+        outline: none;
+    }
+
+/* --- ADIÇÕES PARA EDIT PERK --- */
+
+/* Estilo para a caixa de descrição expandida */
+.settings-grid textarea.settings-textarea {
+    background: rgba(0, 0, 0, 0.7) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: white !important;
+    font-family: 'Sovngarde', sans-serif;
+    padding: 10px 12px !important;
+    transition: all 0.2s;
+    min-height: 80px; /* Altura inicial maior */
+    resize: vertical; /* Permite o usuário aumentar a altura */
+    width: 100%;
+    margin-top: 5px;
+    font-size: 1.1rem;
+}
+
+    .settings-grid textarea.settings-textarea:focus {
+        border-color: #4dd0e1 !important;
+        box-shadow: 0 0 8px rgba(77, 208, 225, 0.2);
+        outline: none;
+    }
+
+/* Garante que o input e o botão Browse fiquem na mesma linha (Flexbox) */
+.settings-modal-content .form-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    width: 100%;
+    margin-top: 5px;
+}
+
+    /* Remove margem superior do input quando dentro de uma linha form-row para alinhar perfeitamente */
+    .settings-modal-content .form-row input {
+        margin-top: 0 !important;
+    }
+
+/* Botão de UI Settings */
+.ui-settings-btn {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: rgba(255, 255, 255, 0.7);
+    padding: 8px 15px;
+    font-family: 'Sovngarde', sans-serif;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+    .ui-settings-btn:hover {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: white;
+        color: white;
+        transform: scale(1.05);
+    }
+
+/* Modo Performance: Remove animações pesadas e blurs */
+.app-container.performance-mode .column-bg-image {
+    transition: none !important;
+    animation: none !important;
+    filter: none !important; /* Remove filtros pesados */
+}
+
+.app-container.performance-mode .perk-node-container {
+    transition: transform 0.1s !important; /* Transição mais rápida/simples */
+}
+
+.app-container.performance-mode .line-active-glow {
+    animation: none !important;
+    filter: none !important; /* Remove blur do glow */
+    opacity: 1 !important;
+}
+
+.app-container.performance-mode .skills-infinite-container {
+    will-change: transform; /* Dica de otimização */
+}
+
+/* Ajuste visual para checkbox labels no modal */
+.checkbox-label input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    margin-right: 10px;
+    accent-color: #ffd700;
+    cursor: pointer;
+}
+
+/* ========================================================= */
+/* PERFORMANCE MODE (GLOBAL OVERRIDE) - UPDATE               */
+/* ========================================================= */
+
+.app-container.performance-mode * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+    transition: none !important;
+    animation: none !important;
+}
+
+/* 1. TRAVAR COLUNA E IMAGEM (Remove Zoom e Movimento lateral) */
+.app-container.performance-mode .skill-column,
+.app-container.performance-mode .skill-column:hover,
+.app-container.performance-mode .skills-columns-track:hover .skill-column,
+.app-container.performance-mode .skills-columns-track .embla__slide:hover .skill-column {
+    transform: none !important;
+}
+
+    /* 2. TRAVAR IMAGEM DE FUNDO (Remove Opacidade e Scale no Hover) */
+    .app-container.performance-mode .column-bg-image,
+    .app-container.performance-mode .skill-column:hover .column-bg-image,
+    .app-container.performance-mode .skill-column.forced-hover .column-bg-image {
+        transform: none !important;
+        /* Define uma opacidade fixa e visível, sem alterar no hover */
+        opacity: 0.8 !important;
+        filter: none !important;
+    }
+
+    /* 3. TRAVAR CONTEÚDO (Remove o pulo do Texto/Ícone para cima no Hover) */
+    .app-container.performance-mode .skill-column:hover .column-content,
+    .app-container.performance-mode .skill-column.forced-hover .column-content {
+        transform: none !important;
+        opacity: 1 !important;
+    }
+
+    /* 4. TRAVAR PREVIEW DA ÁRVORE (Constelação no fundo da coluna) */
+    .app-container.performance-mode .column-tree-preview,
+    .app-container.performance-mode .skill-column:hover .column-tree-preview {
+        /* Mantém visibilidade constante ou remove se preferir performance máxima */
+        opacity: 0.5 !important;
+        transform: none !important;
+    }
+
+/* 5. TEXTOS E LINHAS (Visibilidade garantida) */
+.app-container.performance-mode .skill-name,
+.app-container.performance-mode .tree-title h1 {
+    color: #ffffff !important;
+}
+
+.app-container.performance-mode .line-active-glow {
+    stroke-width: 4px !important;
+    opacity: 1 !important;
+    animation: none !important;
+}
+
+/* ========================================================= */
+/* PAINEL INFERIOR UNIFICADO (Fundo Preto)                   */
+/* ========================================================= */
+
+.bottom-ui-panel {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background: #000000; /* Fundo Preto Sólido */
+    border-top: 1px solid rgba(255, 255, 255, 0.2); /* Linha sutil no topo */
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 15px; /* Espaço para os filtros */
+    /* Animação de Entrada */
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.5s ease-out 0.2s, transform 0.5s ease-out 0.2s;
+}
+
+.loaded .bottom-ui-panel {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.app-container.exiting .bottom-ui-panel {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.3s ease-in, transform 0.3s ease-in;
+}
+
+/* ========================================================= */
+/* AJUSTE DOS FILTROS (Agora relativos ao painel)            */
+/* ========================================================= */
+
+.category-filter-container {
+    position: relative; /* Remove o absolute */
+    bottom: auto;
+    left: auto;
+    transform: none;
+    display: flex;
+    gap: 15px;
+    z-index: 41;
+    opacity: 1; /* Controlado pelo pai agora */
+    margin-bottom: 5px;
+}
+
+.category-btn {
+    background: transparent;
+    color: rgba(255, 255, 255, 0.5);
+    border: 1px solid transparent;
+    border-bottom: 2px solid transparent;
+    font-family: 'Sovngarde', sans-serif;
+    font-size: 0.9rem;
+    letter-spacing: 3px;
+    padding: 6px 16px;
+    cursor: pointer;
+    transition: all 0.3s;
 }
 
 
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-  color: white;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+
+/* ========================================================= */
+/* AJUSTE DO GRID (Remove background e posicionamento)       */
+/* ========================================================= */
+
+.bottom-skills-grid {
+    position: relative; /* Relativo ao painel */
+    bottom: auto;
+    left: auto;
+    width: 100%;
+    height: 180px; /* Altura fixa para o grid */
+
+    display: grid;
+    grid-template-rows: repeat(4, 1fr);
+    grid-auto-flow: column;
+    gap: 8px 30px;
+    padding: 10px 80px 20px 80px;
+    /* REMOVIDO: background linear-gradient */
+    background: transparent;
+    justify-content: center;
+    align-content: center;
+    /* Remove animações individuais, pois o pai controla */
+    opacity: 1;
+    transform: none;
+    transition: none;
 }
 
+.loaded .bottom-skills-grid {
+    opacity: 1;
+    transform: none;
+}
+
+/* ========================================================= */
+/* RÓTULOS DE NOME DOS PERKS (SINGLE TREE VIEW)              */
+/* ========================================================= */
+
+.perk-node-label {
+    position: absolute;
+    bottom: 40px; /* Posiciona acima do ícone (que tem ~32px/50px) */
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Sovngarde', sans-serif;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    text-align: center;
+    pointer-events: none; /* Não atrapalha o clique no nó */
+
+    color: #aaa; /* Cor padrão (bloqueado) */
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+    letter-spacing: 1px;
+    z-index: 20;
+    transition: all 0.3s ease;
+}
+
+/* Quando o Perk está desbloqueado ou pode ser desbloqueado */
+.perk-node-unlocked .perk-node-label,
+.perk-node-acquired .perk-node-label,
+.perk-node-maxed .perk-node-label {
+    color: white;
+    font-size: 0.95rem;
+    font-weight: bold;
+    bottom: 45px; /* Sobe um pouco mais */
+    text-shadow: 0 0 4px var(--tree-glow), 0 0 8px black;
+}
+
+/* No modo preview (colunas), garantimos que não apareça via CSS também por segurança, 
+   embora o React já controle isso */
+.preview-mode .perk-node-label {
+    display: none !important;
+}
+
+/* Adicione isso ao final do app.css */
+
+.alloc-level-wrapper {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+}
+
+.alloc-cap-limit {
+    font-size: 0.85rem;
+    color: #666; /* Cinza escuro para indicar o limite */
+}
+
+.capped-text {
+    color: #ffb74d; /* Cor laranja/amarela para indicar que chegou no teto */
+}
+
+/* Opcional: Efeito visual no botão desabilitado por cap */
+.alloc-controls button:disabled[title="Skill Cap Reached"] {
+    border-color: #553333;
+    color: #553333;
+    background: rgba(50, 0, 0, 0.2);
+}
+
+/* ========================================================= */
+/* FIX: RODAPÉ FIXO NO MODAL DE EDIÇÃO DE PERK               */
+/* ========================================================= */
+
+/* Sobrescreve o overflow do container principal para evitar scroll duplo */
+.fixed-footer-modal {
+    overflow: hidden !important;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Área que contém os inputs e listas (ocupa o espaço restante e tem scroll) */
+.modal-scroll-content {
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 10px; /* Espaço para a barra de rolagem não cobrir o texto */
+    margin-bottom: 10px;
+    /* Estilização da barra de rolagem interna */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(77, 208, 225, 0.4) rgba(0, 0, 0, 0.3);
+}
+
+    /* Webkit Scrollbar para a área interna */
+    .modal-scroll-content::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    .modal-scroll-content::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 4px;
+    }
+
+    .modal-scroll-content::-webkit-scrollbar-thumb {
+        background: rgba(77, 208, 225, 0.4);
+        border-radius: 4px;
+    }
+
+        .modal-scroll-content::-webkit-scrollbar-thumb:hover {
+            background: rgba(77, 208, 225, 0.8);
+        }
+
+/* O rodapé que fica fixo embaixo */
+.modal-fixed-footer {
+    flex-shrink: 0; /* Impede que o rodapé encolha */
+    margin-top: 0 !important;
+    padding-top: 20px;
+    padding-bottom: 5px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    background: transparent;
+    z-index: 10;
+}
+
+/* Botão Legendary na tela de detalhes */
+.legendary-btn-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    margin-bottom: 5px;
+    opacity: 0.8;
+    transition: all 0.3s ease;
+    animation: pulseLegendary 2s infinite;
+    position: relative;
+    z-index: 100;
+}
+
+    .legendary-btn-container:hover {
+        opacity: 1;
+        transform: scale(1.1);
+        filter: drop-shadow(0 0 10px #ffd700);
+    }
+
+.legendary-icon {
+    width: 40px; /* Ajuste conforme seu SVG/PNG do dragão */
+    height: 40px;
+    margin-bottom: -5px;
+}
+
+.legendary-text {
+    font-family: 'Sovngarde', sans-serif;
+    font-size: 0.9rem;
+    color: #ffd700;
+    letter-spacing: 2px;
+}
+
+@keyframes pulseLegendary {
+    0% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.05);
+    }
+
+    100% {
+        transform: scale(1);
+    }
+}
+
+/* ========================================================= */
+/* BOTÕES DE PERIGO (RESET)                                  */
+/* ========================================================= */
+
+/* Classe para botões destrutivos (vermelhos) */
+.danger-btn {
+    border-color: #ff5252 !important;
+    color: #ff5252 !important;
+}
+
+    /* Hover específico para não aumentar de tamanho (remove o scale do .modal-btn) */
+    .danger-btn:hover {
+        background: rgba(255, 82, 82, 0.2) !important;
+        transform: none !important; /* <--- ISSO CORRIGE O PROBLEMA DO TAMANHO */
+    }
+
+/* Ajuste específico para telas com altura limitada (Full HD e menores) */
+@media screen and (max-height: 1080px) {
+    .skill-column {
+        /* Aumenta a margem inferior em telas menores para "empurrar" o conteúdo para cima */
+        padding-bottom: 280px;
+    }
+
+    /* Reduz um pouco a escala do hover em telas pequenas para evitar cortes */
+    .skills-columns-track .embla__slide:hover .skill-column,
+    .skills-columns-track .embla__slide.is-forced-hover .skill-column {
+        /* Reduz de 1.3 para 1.2 se estiver muito apertado */
+        transform: scale(1.2) translateX(0);
+        z-index: 11;
+    }
+
+    /* Ajusta a compensação do texto para a nova escala */
+    .skill-column:hover .column-content,
+    .skill-column.forced-hover .column-content {
+        transform: translateY(-30px) !important;
+    }
+}
+
+.modal-btn[title="Saves to Data/PrismaUI/Exports"]:hover {
+    background: rgba(255, 152, 0, 0.15);
+    border-color: #ffb74d !important;
+    color: white !important;
+    transform: scale(1.05);
+}

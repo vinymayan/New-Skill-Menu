@@ -1,14 +1,21 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
-  "name": "deneme",
+  "name": "skillmenu",
   "version-string": "0.1",
   "dependencies": [
-    "clib-util",
-    "rapidcsv",
-    "directxtk",
+    "fast-cpp-csv-parser",
+    "rsm-binary-io",
     "spdlog",
+    "xbyak",
+    "rapidcsv",
+    "clib-util",
+    "clib-utils-qtr",
+    "directxtk",
+    "skse-mcp",
     "glm",
-    "detours"
+    "detours",
+    "nlohmann-json",
+    "miniz"
   ],
   "overrides": [
     {

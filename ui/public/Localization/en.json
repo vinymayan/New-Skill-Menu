@@ -1,0 +1,218 @@
+{
+  "common": {
+    "cancel": "CANCEL",
+    "save": "SAVE",
+    "confirm": "CONFIRM",
+    "back": "BACK",
+    "close": "CLOSE",
+    "yes": "YES",
+    "no": "NO",
+    "create": "CREATE",
+    "edit": "EDIT",
+    "delete": "DELETE",
+    "add": "ADD",
+    "browse": "BROWSE",
+    "processing": "PROCESSING...",
+    "search_placeholder": "Search by Name, Plugin or ID...",
+    "select": "SELECT...",
+    "click_select": "CLICK TO SELECT...",
+    "unknown": "Unknown",
+    "loading": "LOADING...",
+    "value": "Value",
+    "id_value": "ID/Value",
+    "default": "Default",
+    "base": "Base",
+    "no_items_found": "No items found.",
+    "select_magic_school": "Select School..."
+  },
+  "header": {
+    "name": "NAME",
+    "title": "TITLE",
+    "level": "LEVEL",
+    "race": "RACE",
+    "perk_points": "PERK POINTS",
+    "dragon_souls": "DRAGON SOULS",
+    "health": "HEALTH",
+    "magicka": "MAGICKA",
+    "stamina": "STAMINA",
+    "plugin": "PLUGIN",
+    "form_id": "FORM ID",
+    "editor_id": "EDITOR ID"
+  },
+  "browser": {
+    "title": "FILE BROWSER",
+    "current_location": "Current Location:",
+    "go_back": "[BACK]",
+    "empty_folder": "Empty folder."
+  },
+  "magic_schools": {
+    "alteration": "Alteration",
+    "conjuration": "Conjuration",
+    "destruction": "Destruction",
+    "illusion": "Illusion",
+    "restoration": "Restoration"
+  },
+  "settings": {
+    "title": "MOD SETTINGS",
+    "tabs": {
+      "base": "BASE",
+      "rules": "RULES",
+      "categories": "CATEGORIES",
+      "codes": "CODES"
+    },
+    "base": {
+      "perks_per_level": "Perks per Level:",
+      "skill_cap": "Skill Cap (Max Level):",
+      "enable_legendary": "Enable Legendary?",
+      "refill_attributes": "Refill Attributes on Level Up?",
+      "skill_points_per_level": "Skill Points/Level:",
+      "max_spendable": "Max Skill Points Spendable/Level:",
+      "reset_all_btn": "⚠ RESET ALL PERKS (REFUND POINTS)"
+    },
+    "rules": {
+      "desc": "Rules saved in rules.json. Overrides base settings when level is reached.",
+      "level_label": "LEVEL:",
+      "add_rule": "+ ADD RULE",
+      "skill_cap": "Skill Cap:",
+      "skill_points": "Skill Points:",
+      "max_spend": "Max Spend:",
+      "perks_bonus": "Perks (+):",
+      "health_bonus": "Health (+):",
+      "magicka_bonus": "Magicka (+):",
+      "stamina_bonus": "Stamina (+):"
+    },
+    "categories": {
+      "desc": "Manage Skill Tree categories.",
+      "new_placeholder": "New Category Name",
+      "add_btn": "ADD"
+    },
+    "codes": {
+      "desc": "Create redeemable codes. Set rewards or mark as 'Editor Code' to unlock layout.",
+      "code_placeholder": "ENTER CODE",
+      "max_uses": "Max Uses (-1 for infinite):",
+      "is_editor": "Is Editor Code?",
+      "rewards_title": "REWARDS (Leave empty if none)",
+      "add_code": "+ ADD CODE"
+    }
+  },
+  "tree_editor": {
+    "title": "EDIT TREE PROPERTIES",
+    "edit_tree": "EDIT TREE",
+    "new_title": "NEW TREE",
+    "internal_id": "Internal ID (Folder Name):",
+    "id_warning": "The ID cannot be changed to avoid folder sync issues.",
+    "display_name": "Display Name:",
+    "category": "Category:",
+    "base_color": "Base Color:",
+    "initial_level": "Initial Level:",
+    "advances_player": "Advances Player Level?",
+    "bg_path": "Background Path:",
+    "icon_path": "Icon Path (Skill):",
+    "default_perk_icon": "Default Perk Icon Path:",
+    "exp_formula": "Experience Formula",
+    "requirements_title": "Tree Unlock Requirements",
+    "new_req_btn": "+ NEW REQUIREMENT",
+    "create_instruction": "Enter the Internal ID for the new tree (No spaces, Ex: BloodMagic):",
+    "export_zip": "EXPORT ZIP",
+    "export_zip_tooltip": "Saves to Data/PrismaUI/Exports",
+    "use_mult": "Use Mult:",
+    "use_offset": "Use Offset:",
+    "improve_mult": "Improve Mult:",
+    "improve_offset": "Improve Offset:",
+    "save_before_export": "Save changes before exporting"
+  },
+  "perk_editor": {
+    "edit_title": "EDIT PERK",
+    "new_title": "NEW PERK",
+    "add_new_perk": "ADD NEW PERK",
+    "base_engine": "Base Perk (Engine):",
+    "name_ui": "Name (UI):",
+    "description": "Description:",
+    "cost": "Cost (Perk Points):",
+    "reqs_rank_1": "RANK 1 REQUIREMENTS",
+    "add_req": "+ ADD REQ",
+    "sub_ranks": "SUB-RANKS",
+    "rank_label": "Rank",
+    "rank_req_btn": "+ RANK REQ",
+    "add_manual_rank": "+ ADD RANK MANUALLY",
+    "save_perk": "SAVE PERK",
+    "add_first_perk": "+ ADD INITIAL PERK",
+    "connecting_overlay": "Select target... (Right Click to cancel)",
+    "alert_select_native": "Please select a native Skill/Perk first!",
+    "new_manual_rank_name": "New Manual Rank",
+    "context": {
+      "connect": "Connect with another Perk",
+      "create_connected": "Create new connected Perk",
+      "edit": "Edit Perk",
+      "delete": "Delete Perk"
+    }
+  },
+  "legendary": {
+    "title": "MAKE LEGENDARY",
+    "btn_text": "LEGENDARY",
+    "confirm_message": "Are you sure you want to make {treeName} Legendary?\n\nThis will reset the skill level to {resetLevel}, remove all perks in this tree, and refund your perk points.",
+    "tooltip_req": "Requires Level {hardCap}"
+  },
+  "reset_all": {
+    "title": "RESET ALL PERKS",
+    "confirm_message": "Are you sure you want to reset ALL perks from ALL trees?\n\nThis will remove every perk you have learned and refund all spent perk points. Skill levels will NOT be reset."
+  },
+  "level_up": {
+    "title": "LEVEL UP",
+    "allocate": "ALLOCATE SKILLS ({points} LEFT)",
+    "choose_attr": "CHOOSE ATTRIBUTE",
+    "confirm_btn": "CONFIRM LEVEL UP",
+    "cap_reached": "Skill Cap Reached"
+  },
+  "unlock_perk": {
+    "title": "UNLOCK PERK",
+    "message": "Do you want to spend {cost} perk point{plural} to unlock {perkName}?",
+    "cost_tag": "Cost: {cost} Point(s)",
+    "acquired": "ACQUIRED"
+  },
+  "ui_options": {
+    "title": "INTERFACE SETTINGS",
+    "btn_text": "⚙️ UI OPTIONS",
+    "hide_locked_names": "Hide Locked Tree Names",
+    "hide_locked_bg": "Hide Locked Tree Backgrounds",
+    "performance_mode": "Performance Mode (Disable Animations)",
+    "hide_perk_names": "Hide Perk Names (Detail View)",
+    "enable_editor": "ENABLE EDITOR MODE",
+    "language_label": "LANGUAGE",
+    "column_preview_label": "Column Preview Mode",
+    "preview_modes": {
+      "full": "BG + Perk Tree (Default)",
+      "bg": "BG Only",
+      "tree": "Perk Tree Only",
+      "none": "None (Best Performance)"
+    }
+  },
+  "reqs": {
+    "level": "Level {val} in {target}",
+    "player_level": "Player Level {val}",
+    "is_vampire": "Must be Vampire",
+    "is_werewolf": "Must be Werewolf",
+    "any_skill": "{target} Level {val}",
+    "spells_known": "Know {val} Spells ({target})",
+    "kills": "{val} Total Kills",
+    "perk": "Has Perk: {val}",
+    "item": "Has Item: {val}",
+    "global": "Global: {val}",
+    "locked_tree_title": "REQUIRED TO UNLOCK",
+    "boolean_base_value": "Y/N Base Value",
+    "requirements_label": "Requirements:",
+    "logic_or_title": "Logic: OR (Matches if this OR next is true)",
+    "logic_and_title": "Logic: AND (Must match)"
+  },
+  "editor_toolbar": {
+    "mode_btn": "EDITOR MODE",
+    "close_btn": "CLOSE EDITOR",
+    "new_tree": "+ NEW TREE",
+    "edit_settings": "EDIT MOD SETTINGS",
+    "save_changes": "SAVE TREE CHANGES"
+  },
+  "code_input": {
+    "placeholder": "ENTER CODE",
+    "redeem_btn": "REDEEM"
+  }
+}

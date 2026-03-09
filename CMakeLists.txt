@@ -10,8 +10,7 @@ endif()
 #               Imports and definitions                #
 # ---------------------------------------------------- #
 
-include(cmake/lib/copyOutputs.cmake)
-include(cmake/lib/automaticGameFolderOutput.cmake)
+
 include(cmake/lib/autoCollectSources.cmake)
 
 
@@ -23,9 +22,9 @@ add_include_folder(vendor/include)
 
 
 cmake_minimum_required(VERSION 3.21)
-set(AUTHOR_NAME "AuthorName")
-set(PRODUCT_NAME "PrismaUISKSETemplate")
-set(BEAUTIFUL_NAME "PrismaUI SKSE Template")
+set(AUTHOR_NAME "Viny")
+set(PRODUCT_NAME "SkillMenu")
+set(BEAUTIFUL_NAME "SkillMenu")
 
 project(${PRODUCT_NAME} VERSION 3.0.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
@@ -70,6 +69,9 @@ add_subdirectory("$ENV{COMMONLIB_SSE_FOLDER}" ${CMAKE_CURRENT_BINARY_DIR}/_deps/
 get_target_property(COMMONLIB_SRC_DIR CommonLibSSE SOURCE_DIR)
 
 find_path(CLIB_UTIL_INCLUDE_DIRS "ClibUtil/utils.hpp")
+find_path(CLIB_UTILS_QTR_INCLUDE_DIRS "ClibUtilsQTR/utils.hpp")
+find_path(SKSE_MCP_INCLUDE_DIRS "SKSEMCP/utils.hpp")
+
 file(
   GLOB_RECURSE
   sources
@@ -91,6 +93,8 @@ source_group(
 
 set(BUILD_TESTS OFF)
 include(${COMMONLIB_SRC_DIR}/cmake/CommonLibSSE.cmake)
+find_package(miniz CONFIG REQUIRED)
+
 
 add_commonlibsse_plugin(
   ${PROJECT_NAME}
@@ -122,6 +126,11 @@ target_include_directories(
     ${header_dirs}
     ${CLIB_UTIL_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(
+    ${PROJECT_NAME}
+    PRIVATE
+    miniz::miniz
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE ${DETOURS_LIBRARY})
 target_compile_definitions(${PRODUCT_NAME} PRIVATE MOD_NAME="${BEAUTIFUL_NAME}")
@@ -187,8 +196,9 @@ add_dependencies(${PROJECT_NAME} build_ui)
 # ---------------------------------------------------- #
 #                        Output                        #
 # ---------------------------------------------------- #
-
+include(cmake/lib/copyOutputs.cmake)
+include(cmake/lib/automaticGameFolderOutput.cmake)
 set(wildlander_output false)
 set(steam_owrt_output false)
 set(steam_mods_output true)
-automaticGameFolderOutput(wildlander_output, steam_owrt_output, steam_mods_output)
+automaticGameFolderOutput(${wildlander_output} ${steam_owrt_output} ${steam_mods_output})

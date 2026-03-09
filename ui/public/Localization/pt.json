@@ -1,0 +1,218 @@
+{
+  "common": {
+    "cancel": "CANCELAR",
+    "save": "SALVAR",
+    "confirm": "CONFIRMAR",
+    "back": "VOLTAR",
+    "close": "FECHAR",
+    "yes": "SIM",
+    "no": "NÃO",
+    "create": "CRIAR",
+    "edit": "EDITAR",
+    "delete": "EXCLUIR",
+    "add": "ADICIONAR",
+    "browse": "PROCURAR",
+    "processing": "PROCESSANDO...",
+    "search_placeholder": "Buscar por Nome, Plugin ou ID...",
+    "select": "SELECIONAR...",
+    "click_select": "CLIQUE PARA SELECIONAR...",
+    "unknown": "Desconhecido",
+    "loading": "CARREGANDO...",
+    "value": "Valor",
+    "id_value": "ID/Valor",
+    "default": "Padrão",
+    "base": "Base",
+    "no_items_found": "Nenhum item encontrado.",
+    "select_magic_school": "Escola de Magia..."
+  },
+  "header": {
+    "name": "NOME",
+    "title": "TÍTULO",
+    "level": "NÍVEL",
+    "race": "RAÇA",
+    "perk_points": "PONTOS DE PERK",
+    "dragon_souls": "ALMAS DE DRAGÃO",
+    "health": "SAÚDE",
+    "magicka": "MAGIA",
+    "stamina": "VIGOR",
+    "plugin": "PLUGIN",
+    "form_id": "FORM ID",
+    "editor_id": "EDITOR ID"
+  },
+  "browser": {
+    "title": "NAVEGADOR DE ARQUIVOS",
+    "current_location": "Localização Atual:",
+    "go_back": "[VOLTAR]",
+    "empty_folder": "Pasta vazia."
+  },
+  "magic_schools": {
+    "alteration": "Alteração",
+    "conjuration": "Conjuração",
+    "destruction": "Destruição",
+    "illusion": "Ilusão",
+    "restoration": "Restauração"
+  },
+  "settings": {
+    "title": "CONFIGURAÇÕES DO MOD",
+    "tabs": {
+      "base": "BASE",
+      "rules": "REGRAS",
+      "categories": "CATEGORIAS",
+      "codes": "CÓDIGOS"
+    },
+    "base": {
+      "perks_per_level": "Perks por Nível:",
+      "skill_cap": "Limite de Habilidade (Nível Máx):",
+      "enable_legendary": "Ativar Lendário?",
+      "refill_attributes": "Encher Atributos ao Subir de Nível?",
+      "skill_points_per_level": "Pontos de Habilidade/Nível:",
+      "max_spendable": "Máx. de Pontos Gastáveis/Nível:",
+      "reset_all_btn": "⚠ RESETAR TODOS OS PERKS (REEMBOLSAR PONTOS)"
+    },
+    "rules": {
+      "desc": "Regras salvas em rules.json. Substitui as configurações base ao atingir o nível.",
+      "level_label": "NÍVEL:",
+      "add_rule": "+ ADICIONAR REGRA",
+      "skill_cap": "Limite Skill:",
+      "skill_points": "Pontos Skill:",
+      "max_spend": "Gasto Máx:",
+      "perks_bonus": "Perks (+):",
+      "health_bonus": "Saúde (+):",
+      "magicka_bonus": "Magia (+):",
+      "stamina_bonus": "Vigor (+):"
+    },
+    "categories": {
+      "desc": "Gerenciar categorias da Árvore de Habilidades.",
+      "new_placeholder": "Nome da Nova Categoria",
+      "add_btn": "ADICIONAR"
+    },
+    "codes": {
+      "desc": "Criar códigos resgatáveis.",
+      "code_placeholder": "DIGITE O CÓDIGO",
+      "max_uses": "Usos Máximos (-1 para infinito):",
+      "is_editor": "É Código de Editor?",
+      "rewards_title": "RECOMPENSAS",
+      "add_code": "+ ADICIONAR CÓDIGO"
+    }
+  },
+  "tree_editor": {
+    "title": "EDITAR PROPRIEDADES DA ÁRVORE",
+    "edit_tree": "EDITAR ÁRVORE",
+    "new_title": "NOVA ÁRVORE",
+    "internal_id": "ID Interno (Nome da Pasta):",
+    "id_warning": "O ID não pode ser alterado.",
+    "display_name": "Nome de Exibição:",
+    "category": "Categoria:",
+    "base_color": "Cor Base:",
+    "initial_level": "Nível Inicial:",
+    "advances_player": "Avança Nível do Jogador?",
+    "bg_path": "Caminho do Fundo:",
+    "icon_path": "Caminho do Ícone (Habilidade):",
+    "default_perk_icon": "Caminho Padrão do Ícone de Perk:",
+    "exp_formula": "Fórmula de Experiência",
+    "requirements_title": "Requisitos para Desbloquear Árvore",
+    "new_req_btn": "+ NOVO REQUISITO",
+    "create_instruction": "Digite o ID Interno para a nova árvore:",
+    "export_zip": "EXPORTAR ZIP",
+    "export_zip_tooltip": "Salva em Data/PrismaUI/Exports",
+    "use_mult": "Uso Mult:",
+    "use_offset": "Uso Offset:",
+    "improve_mult": "Melhoria Mult:",
+    "improve_offset": "Melhoria Offset:",
+    "save_before_export": "Salve as alterações antes de exportar"
+  },
+  "perk_editor": {
+    "edit_title": "EDITAR PERK",
+    "new_title": "NOVO PERK",
+    "add_new_perk": "ADICIONAR NOVO PERK",
+    "base_engine": "Perk Base (Engine):",
+    "name_ui": "Nome (Interface):",
+    "description": "Descrição:",
+    "cost": "Custo (Pontos de Perk):",
+    "reqs_rank_1": "REQUISITOS DO RANK 1",
+    "add_req": "+ ADD REQUISITO",
+    "sub_ranks": "SUB-RANKS",
+    "rank_label": "Rank",
+    "rank_req_btn": "+ REQUISITO DE RANK",
+    "add_manual_rank": "+ ADICIONAR RANK MANUALMENTE",
+    "save_perk": "SALVAR PERK",
+    "add_first_perk": "+ ADICIONAR PERK INICIAL",
+    "connecting_overlay": "Selecione o alvo... (Botão Direito para cancelar)",
+    "alert_select_native": "Selecione uma Skill/Perk nativa primeiro!",
+    "new_manual_rank_name": "Novo Rank Manual",
+    "context": {
+      "connect": "Conectar com outro Perk",
+      "create_connected": "Criar novo Perk conectado",
+      "edit": "Editar Perk",
+      "delete": "Excluir Perk"
+    }
+  },
+  "legendary": {
+    "title": "TORNAR LENDÁRIO",
+    "btn_text": "LENDÁRIO",
+    "confirm_message": "Tem certeza de que deseja tornar {treeName} Lendário?\n\nIsso resetará o nível para {resetLevel} e removerá os perks.",
+    "tooltip_req": "Requer Nível {hardCap}"
+  },
+  "reset_all": {
+    "title": "RESETAR TODOS OS PERKS",
+    "confirm_message": "Tem certeza? Isso removerá todos os perks aprendidos."
+  },
+  "level_up": {
+    "title": "SUBIU DE NÍVEL",
+    "allocate": "ALOCAR HABILIDADES ({points} RESTANTES)",
+    "choose_attr": "ESCOLHER ATRIBUTO",
+    "confirm_btn": "CONFIRMAR",
+    "cap_reached": "Limite Atingido"
+  },
+  "unlock_perk": {
+    "title": "DESBLOQUEAR PERK",
+    "message": "Gastar {cost} ponto{plural} para desbloquear {perkName}?",
+    "cost_tag": "Custo: {cost} Ponto(s)",
+    "acquired": "ADQUIRIDO"
+  },
+  "ui_options": {
+    "title": "CONFIGURAÇÕES DE INTERFACE",
+    "btn_text": "⚙️ OPÇÕES DE UI",
+    "hide_locked_names": "Ocultar Nomes de Árvores Bloqueadas",
+    "hide_locked_bg": "Ocultar Fundos de Árvores Bloqueadas",
+    "performance_mode": "Modo Desempenho",
+    "hide_perk_names": "Ocultar Nomes dos Perks",
+    "enable_editor": "ATIVAR MODO EDITOR",
+    "language_label": "IDIOMA",
+    "column_preview_label": "Modo de Visualização da Coluna",
+    "preview_modes": {
+      "full": "Fundo + Árvore (Padrão)",
+      "bg": "Apenas Fundo",
+      "tree": "Apenas Árvore",
+      "none": "Nenhum (Melhor Desempenho)"
+    }
+  },
+  "reqs": {
+    "level": "Nível {val} em {target}",
+    "player_level": "Nível do Jogador {val}",
+    "is_vampire": "Deve ser Vampiro",
+    "is_werewolf": "Deve ser Lobisomem",
+    "any_skill": "{target} Nível {val}",
+    "spells_known": "Conhecer {val} Feitiços ({target})",
+    "kills": "{val} Mortes Totais",
+    "perk": "Possui Perk: {val}",
+    "item": "Possui Item: {val}",
+    "global": "Global: {val}",
+    "locked_tree_title": "REQUISITO PARA DESBLOQUEAR",
+    "boolean_base_value": "S/N Valor Base",
+    "requirements_label": "Requisitos:",
+    "logic_or_title": "Lógica: OU (Válido se este OU o próximo for verdadeiro)",
+    "logic_and_title": "Lógica: E (Deve ser verdadeiro)"
+  },
+  "editor_toolbar": {
+    "mode_btn": "MODO EDITOR",
+    "close_btn": "FECHAR MODO EDITOR",
+    "new_tree": "+ NOVA ÁRVORE",
+    "edit_settings": "EDITAR CONFIGURAÇÕES",
+    "save_changes": "SALVAR ALTERAÇÕES"
+  },
+  "code_input": {
+    "placeholder": "DIGITE O CÓDIGO",
+    "redeem_btn": "RESGATAR"
+  }
+}
