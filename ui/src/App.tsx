@@ -4,7 +4,9 @@ import useEmblaCarousel from 'embla-carousel-react';
 import { SketchPicker } from 'react-color';
 import './App.css';
 import { t, setLanguage, addTranslation, hasTranslation, type Language } from './lib/locales';
-
+import { Stage, Layer, Line, Circle, Group, Image as KonvaImage, Text as KonvaText } from 'react-konva';
+import useImage from 'use-image'
+import Konva from 'konva';
 // --- Interfaces ---
 interface Requirement {
     type: string;
@@ -114,11 +116,50 @@ interface SettingsData {
         maxSkillPointsSpendablePerLevel: number;
         enableLegendary: boolean;
         refillAttributesOnLevelUp?: boolean;
+        useBaseSkillLevel?: boolean;
         skillCap?: number;
     };
     categories: string[];
     codes: CodeData[];
 }
+
+const useCustomImage = (url: string) => {
+    const [image, setImage] = useState<HTMLImageElement | undefined>(undefined);
+    useEffect(() => {
+        if (!url) return;
+        const img = new Image();
+        img.src = url;
+        img.onload = () => setImage(img);
+    }, [url]);
+    return [image];
+};
+
+// New Helper Hook: Monitors element size for Konva Stage dimensions
+const useElementSize = (ref: React.RefObject<HTMLElement>) => {
+    const [size, setSize] = useState({ width: 0, height: 0 });
+
+    useEffect(() => {
+        if (!ref.current) return;
+
+        const updateSize = () => {
+            if (ref.current) {
+                // Use offsetWidth/Height to get layout size before CSS transforms
+                setSize({
+                    width: ref.current.offsetWidth,
+                    height: ref.current.offsetHeight
+                });
+            }
+        };
+
+        updateSize();
+        const observer = new ResizeObserver(updateSize);
+        observer.observe(ref.current);
+
+        return () => observer.disconnect();
+    }, [ref]);
+
+    return size;
+};
 
 const FileBrowserModal = ({ field, initialPath, onClose, onSelect }: { field: string, initialPath: string, onClose: () => void, onSelect: (f: string, p: string) => void }) => {
     const [currentPath, setCurrentPath] = useState(initialPath || "");
@@ -786,6 +827,159 @@ const PlayerHeader = ({ player }: { player: PlayerData }) => {
     );
 };
 
+const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setHoveredPerk, onNodeClick }: {
+    node: PerkNode,
+    treeColor: string,
+    iconPerkPath?: string,
+    width: number,
+    height: number,
+    setHoveredPerk?: (p: PerkNode | null) => void,
+    onNodeClick?: (node: PerkNode) => void
+}) => {
+    const groupRef = useRef<Konva.Group>(null);
+
+    // Calcula posições em PIXELS baseados na porcentagem
+    const x = (node.x / 100) * width;
+    const y = (node.y / 100) * height;
+
+    // Resolve ícone
+    const iconSource = useValidImage(node.icon || iconPerkPath, DEFAULT_PERK_ICON);
+    const [image] = useCustomImage(iconSource);
+
+    // Estados de cor (Mesma lógica anterior)
+    const isMaxed = useMemo(() => {
+        if (!node.isUnlocked) return false;
+        if (!node.nextRanks || node.nextRanks.length === 0) return true;
+        return node.nextRanks.every(rank => rank.isUnlocked);
+    }, [node]);
+
+    let strokeColor = 'rgba(255,255,255,0.2)';
+    let fillColor = 'rgba(0,0,0,0.8)';
+    let iconOpacity = 0.5;
+
+    if (isMaxed) {
+        strokeColor = treeColor;
+        fillColor = treeColor;
+        iconOpacity = 1;
+    } else if (node.isUnlocked) {
+        strokeColor = treeColor;
+        fillColor = 'rgba(0,0,0,0.9)';
+        iconOpacity = 1;
+    } else if (node.canUnlock) {
+        strokeColor = '#ffd700';
+        iconOpacity = 0.8;
+    }
+
+    const nodeSize = 40;
+    const iconSize = 24;
+
+    // --- ANIMAÇÕES ---
+    const handleMouseEnter = () => {
+        document.body.style.cursor = 'pointer';
+        setHoveredPerk?.(node);
+
+        const nodeGroup = groupRef.current;
+        if (nodeGroup) {
+            // Traz para frente (Z-Index)
+            nodeGroup.moveToTop();
+
+            // Animação de Escala (Substitui CSS transform: scale(1.2))
+            nodeGroup.to({
+                scaleX: 1.3,
+                scaleY: 1.3,
+                duration: 0.2, // segundos
+                easing: Konva.Easings.BackEaseOut, // Efeito "elástico" suave
+                shadowBlur: 15,
+                shadowOpacity: 0.8
+            });
+        }
+    };
+
+    const handleMouseLeave = () => {
+        document.body.style.cursor = 'default';
+        setHoveredPerk?.(null);
+
+        const nodeGroup = groupRef.current;
+        if (nodeGroup) {
+            // Retorna ao tamanho original
+            nodeGroup.to({
+                scaleX: 1,
+                scaleY: 1,
+                duration: 0.2,
+                easing: Konva.Easings.EaseOut,
+                shadowBlur: node.isUnlocked ? 10 : 0,
+                shadowOpacity: 0.6
+            });
+        }
+    };
+
+    // Aplica o cache inicial após montar
+    useEffect(() => {
+        if (groupRef.current) {
+            groupRef.current.cache();
+        }
+    }, [image, isMaxed, node.isUnlocked]); // Re-cache se a imagem carregar ou status mudar
+
+    return (
+        <Group
+            ref={groupRef}
+            x={x}
+            y={y}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+            onClick={(e) => {
+                e.cancelBubble = true;
+                onNodeClick?.(node);
+            }}
+        >
+            {/* Círculo invisível para Hitbox e Glow */}
+            <Circle
+                radius={nodeSize / 2}
+                fill="transparent"  /* Fundo Transparente */
+                stroke="transparent" /* Borda Transparente */
+                strokeWidth={0}      /* Sem largura de linha */
+
+                /* Mantemos o shadow se quiser que o ícone pareça brilhar, 
+                   mas aplicamos apenas quando desbloqueado */
+                shadowColor={treeColor}
+                shadowBlur={node.isUnlocked ? 20 : 0}
+                shadowOpacity={node.isUnlocked ? 0.6 : 0}
+            />
+
+            {/* Ícone (Agora é o elemento principal visual) */}
+            {image && (
+                <KonvaImage
+                    image={image}
+                    width={iconSize}
+                    height={iconSize}
+                    x={-iconSize / 2}
+                    y={-iconSize / 2}
+                    opacity={iconOpacity}
+                    globalCompositeOperation={isMaxed ? 'source-over' : 'source-over'}
+                />
+            )}
+
+            {/* Nome do Perk */}
+            {(node.isUnlocked || node.canUnlock) && (
+                <KonvaText
+                    text={node.name.toUpperCase()}
+                    y={25}
+                    fontSize={14}
+                    fontFamily="Sovngarde"
+                    fill="white"
+                    align="center"
+                    width={200}
+                    x={-100}
+                    shadowColor="black"
+                    shadowBlur={2}
+                    opacity={node.isUnlocked ? 1 : 0.7}
+                    listening={false}
+                />
+            )}
+        </Group>
+    );
+});
+
 const PerkNodeElement = memo(({ node, treeColor, iconPerkPath, isPreview, isEditorMode, isKeyboardSelected,
     setHoveredPerk, onNodeClick, uiSettings, onStartDrag, onNodeContextMenu }: {
         node: PerkNode, treeName: string, treeColor: string, iconPerkPath?: string, isPreview: boolean, isEditorMode: boolean, isKeyboardSelected?: boolean,
@@ -867,42 +1061,114 @@ const PerkNodeElement = memo(({ node, treeColor, iconPerkPath, isPreview, isEdit
     );
 });
 
-// OTIMIZAÇÃO: Caching Visual Constante equivalente ao cache() do Konva.
-// Este memo garante que todas as conexões (que geram cálculos pesados de caminhos) não sejam refeitas 
-// quando aplicamos transformações de panning.
-const TreeConnections = memo(({ nodes, treeColor }: { nodes: PerkNode[], treeColor: string }) => {
-    return (
-        <svg className="tree-connections" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none' }}>
-            {nodes.map(node => node.links.map(targetId => {
-                const targetNode = nodes.find(n => n.id === targetId);
-                if (!targetNode) return null;
-                const isSourceUnlocked = node.isUnlocked;
-                const isTargetUnlocked = targetNode.isUnlocked;
-                const isCompleted = isSourceUnlocked && isTargetUnlocked;
-                const isPathRevealed = isSourceUnlocked;
+const TreeCanvasLayer = memo(({ nodes, treeColor, width, height, isEditorMode, iconPerkPath, setHoveredPerk, onNodeClick }: {
+    nodes: PerkNode[], treeColor: string, width: number, height: number, isEditorMode: boolean,
+    iconPerkPath?: string, setHoveredPerk?: (p: PerkNode | null) => void, onNodeClick?: (n: PerkNode) => void
+}) => {
+    if (width === 0 || height === 0) return null;
 
-                return (
-                    <line
-                        key={`${node.id}-${targetId}`}
-                        x1={`${node.x}%`} y1={`${node.y}%`}
-                        x2={`${targetNode.x}%`} y2={`${targetNode.y}%`}
-                        stroke={isCompleted ? treeColor : (isPathRevealed ? 'rgba(255, 255, 255, 0.5)' : 'rgba(255, 255, 255, 0.1)')}
-                        strokeWidth={isCompleted ? "4" : "2"}
-                        strokeDasharray={isCompleted ? "none" : "5,5"}
-                        strokeLinecap="round"
-                        style={{ transition: 'stroke 0.3s ease, stroke-width 0.3s ease' }}
+    return (
+        <Stage
+            width={width}
+            height={height}
+            style={{ position: 'absolute', top: 0, left: 0, pointerEvents: isEditorMode ? 'none' : 'auto' }}
+        >
+            <Layer>
+                {/* 1. LINHAS (Sempre desenhadas no Canvas) */}
+                {nodes.map(node => node.links.map(targetId => {
+                    const targetNode = nodes.find(n => n.id === targetId);
+                    if (!targetNode) return null;
+
+                    const isCompleted = node.isUnlocked && targetNode.isUnlocked;
+                    const x1 = (node.x / 100) * width;
+                    const y1 = (node.y / 100) * height;
+                    const x2 = (targetNode.x / 100) * width;
+                    const y2 = (targetNode.y / 100) * height;
+
+                    return (
+                        <Line
+                            key={`link-${node.id}-${targetId}`}
+                            points={[x1, y1, x2, y2]}
+                            stroke={isCompleted ? treeColor : 'rgba(255, 255, 255, 0.1)'}
+                            strokeWidth={isCompleted ? 4 : 2}
+                            dash={isCompleted ? [] : [5, 5]}
+                            lineCap="round"
+                            lineJoin="round"
+                            listening={false}
+                        />
+                    );
+                }))}
+
+                {/* 2. NODOS (Desenhados no Canvas APENAS se NÃO for Editor Mode) */}
+                {!isEditorMode && nodes.map(node => (
+                    <KonvaPerkNode
+                        key={`knode-${node.id}`}
+                        node={node}
+                        treeColor={treeColor}
+                        iconPerkPath={iconPerkPath}
+                        width={width}
+                        height={height}
+                        setHoveredPerk={setHoveredPerk}
+                        onNodeClick={onNodeClick}
                     />
-                );
-            }))}
-        </svg>
+                ))}
+            </Layer>
+        </Stage>
+    );
+});
+
+
+const TreeConnections = memo(({ nodes, treeColor, width, height }: {
+    nodes: PerkNode[], treeColor: string, width: number, height: number
+}) => {
+    if (width === 0 || height === 0) return null;
+    return (
+        <Stage
+            width={width}
+            height={height}
+            style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
+        >
+            <Layer>
+                {nodes.map(node => node.links.map(targetId => {
+                    const targetNode = nodes.find(n => n.id === targetId);
+                    if (!targetNode) return null;
+
+                    const isSourceUnlocked = node.isUnlocked;
+                    const isTargetUnlocked = targetNode.isUnlocked;
+                    const isCompleted = isSourceUnlocked && isTargetUnlocked;
+                    const isPathRevealed = isSourceUnlocked;
+
+                    // Calculate pixel coordinates from percentages
+                    const x1 = (node.x / 100) * width;
+                    const y1 = (node.y / 100) * height;
+                    const x2 = (targetNode.x / 100) * width;
+                    const y2 = (targetNode.y / 100) * height;
+
+                    return (
+                        <Line
+                            key={`${node.id}-${targetId}`}
+                            points={[x1, y1, x2, y2]}
+                            stroke={isCompleted ? treeColor : (isPathRevealed ? 'rgba(255, 255, 255, 0.5)' : 'rgba(255, 255, 255, 0.1)')}
+                            strokeWidth={isCompleted ? 4 : 2}
+                            dash={isCompleted ? [] : [5, 5]} // Konva uses array for dash, SVG used string "5,5"
+                            lineCap="round"
+                            lineJoin="round"
+                            listening={false} // Performance optimization: lines don't need mouse events
+                        />
+                    );
+                }))}
+            </Layer>
+        </Stage>
     );
 });
 
 const TreeVisualNodes = memo(({ treeData, isPreview, isEditorMode,
-    setHoveredPerk, onNodeClick, uiSettings }: {
+    setHoveredPerk, onNodeClick, uiSettings, containerWidth, containerHeight }: {
         treeData: SkillTreeData,
         isPreview: boolean,
         isEditorMode: boolean,
+        containerWidth: number, // New Prop
+        containerHeight: number, // New Prop
         uiSettings?: UISettings | null,
         setHoveredPerk?: (p: PerkNode | null) => void,
         onNodeClick?: (node: PerkNode) => void
@@ -912,7 +1178,12 @@ const TreeVisualNodes = memo(({ treeData, isPreview, isEditorMode,
 
     return (
         <>
-            <TreeConnections nodes={nodes} treeColor={treeColor} />
+            <TreeConnections
+                nodes={nodes}
+                treeColor={treeColor}
+                width={containerWidth}
+                height={containerHeight}
+            />
             {nodes.map(node => (
                 <PerkNodeElement
                     key={node.id}
@@ -1019,6 +1290,15 @@ const SettingsModal = ({ settings, rules, onClose, onSaveSettings, onSaveRules, 
                                     onChange={handleBaseChange}
                                 />
                                 {t('settings.base.refill_attributes')}
+                            </label>
+                            <label className="checkbox-label" style={{ marginTop: '10px' }}>
+                                <input
+                                    type="checkbox"
+                                    name="useBaseSkillLevel"
+                                    checked={settingsData.base.useBaseSkillLevel !== false}
+                                    onChange={handleBaseChange}
+                                />
+                                {t('settings.base.use_base_skill_level')}
                             </label>
                             <label>{t('settings.base.skill_points_per_level')} <input type="number" name="skillPointsPerLevel" value={settingsData.base.skillPointsPerLevel} onChange={handleBaseChange} /></label>
                             <label>{t('settings.base.max_spendable')} <input type="number" name="maxSkillPointsSpendablePerLevel" value={settingsData.base.maxSkillPointsSpendablePerLevel} onChange={handleBaseChange} /></label>
@@ -1147,6 +1427,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
     const treeColor = treeData.color || DEFAULT_COLOR;
 
     const containerRef = useRef<HTMLDivElement>(null);
+    const { width: containerWidth, height: containerHeight } = useElementSize(containerRef);
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
 
@@ -1409,8 +1690,35 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                 onMouseLeave={handleCanvasMouseUp}
                 style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: '0 0', width: '100%', height: '100%', willChange: 'transform' }}>
 
-                {/* OTIMIZAÇÃO: Uso de Componente Memoizado (equivalente ao cache() no Konva) */}
-                <TreeConnections nodes={treeData.nodes} treeColor={treeColor} />
+                {/* UNIFICADO: Renderiza Linhas E Nodos (se !isEditorMode) */}
+                <TreeCanvasLayer
+                    nodes={treeData.nodes}
+                    treeColor={treeColor}
+                    width={containerWidth}
+                    height={containerHeight}
+                    isEditorMode={isEditorMode} // Se true, o Canvas desenha só linhas
+                    iconPerkPath={treeData.iconPerkPath}
+                    setHoveredPerk={handlePerkNodeHover}
+                    onNodeClick={handlePerkNodeClick}
+                />
+
+                {/* MODO EDITOR: Renderiza Nodos HTML por cima para permitir Drag/ContextMenu */}
+                {isEditorMode && treeData.nodes.map((node) => (
+                    <PerkNodeElement
+                        key={node.id}
+                        node={node}
+                        treeName={treeData.name}
+                        treeColor={treeColor}
+                        iconPerkPath={treeData.iconPerkPath}
+                        isPreview={false}
+                        isEditorMode={true} // Força modo editor
+                        setHoveredPerk={handlePerkNodeHover}
+                        uiSettings={uiSettings}
+                        onStartDrag={handleNodeStartDrag}
+                        onNodeContextMenu={handleNodeContextMenu}
+                        onNodeClick={handlePerkNodeClick}
+                    />
+                ))}
 
                 {isEditorMode && treeData.nodes.length === 0 && (
                     <button className="add-first-perk-btn" onClick={() => setEditingNode({ node: { x: 50, y: 50, perkCost: 1, requirements: [], links: [] } })}>{t('perk_editor.add_first_perk')}</button>
@@ -1422,23 +1730,23 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                     </div>
                 )}
 
-                {treeData.nodes.map((node) => (
-                    <PerkNodeElement
-                        key={node.id}
-                        node={node}
-                        treeName={treeData.name}
-                        treeColor={treeColor}
-                        iconPerkPath={treeData.iconPerkPath}
-                        isPreview={false}
-                        isEditorMode={isEditorMode}
-                        isKeyboardSelected={keyboardSelectedNodeId === node.id}
-                        setHoveredPerk={handlePerkNodeHover}
-                        uiSettings={uiSettings}
-                        onStartDrag={handleNodeStartDrag}
-                        onNodeContextMenu={handleNodeContextMenu}
-                        onNodeClick={handlePerkNodeClick}
-                    />
-                ))}
+                {/*{treeData.nodes.map((node) => (*/}
+                {/*    <PerkNodeElement*/}
+                {/*        key={node.id}*/}
+                {/*        node={node}*/}
+                {/*        treeName={treeData.name}*/}
+                {/*        treeColor={treeColor}*/}
+                {/*        iconPerkPath={treeData.iconPerkPath}*/}
+                {/*        isPreview={false}*/}
+                {/*        isEditorMode={isEditorMode}*/}
+                {/*        isKeyboardSelected={keyboardSelectedNodeId === node.id}*/}
+                {/*        setHoveredPerk={handlePerkNodeHover}*/}
+                {/*        uiSettings={uiSettings}*/}
+                {/*        onStartDrag={handleNodeStartDrag}*/}
+                {/*        onNodeContextMenu={handleNodeContextMenu}*/}
+                {/*        onNodeClick={handlePerkNodeClick}*/}
+                {/*    />*/}
+                {/*))}*/}
 
                 {activeTooltipNode && !isEditorMode && !draggingNodeId && (() => {
                     const nodeToShow = activeTooltipNode;
@@ -1760,7 +2068,9 @@ const SkillColumn = memo(({ treeData, uiSettings, availablePerks, onSelect, onCo
     onContextMenu: (e: React.MouseEvent, name: string) => void,
     isForcedHover?: boolean
 }) => {
-    const [ref, isVisible] = useVisibility('0px 100px 0px 100px');
+    const ref = useRef<HTMLDivElement>(null);
+    const { width, height } = useElementSize(ref);
+    const [isVisible] = useVisibility('0px 100px 0px 100px'); // logic remains same but separate hooks
 
     const iconImage = useValidImage(treeData.iconPath, DEFAULT_ICON);
     const resolvedTreeBG = useValidImage(treeData.bgPath, DEFAULT_BG);
@@ -1813,6 +2123,8 @@ const SkillColumn = memo(({ treeData, uiSettings, availablePerks, onSelect, onCo
                         treeData={treeData}
                         isPreview={true}
                         isEditorMode={false}
+                        containerWidth={width} // Pass width
+                        containerHeight={height * 0.6} // Use 60% height for preview area matching CSS .column-tree-preview height
                     />
                 )}
             </div>

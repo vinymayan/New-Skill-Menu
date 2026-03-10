@@ -65,6 +65,7 @@
       "skill_cap": "Limite de Habilidade (Nível Máx):",
       "enable_legendary": "Ativar Lendário?",
       "refill_attributes": "Encher Atributos ao Subir de Nível?",
+      "use_base_skill_level": "Usar Nível Base para Requisitos (Ignorar Bônus)?",
       "skill_points_per_level": "Pontos de Habilidade/Nível:",
       "max_spendable": "Máx. de Pontos Gastáveis/Nível:",
       "reset_all_btn": "⚠ RESETAR TODOS OS PERKS (REEMBOLSAR PONTOS)"

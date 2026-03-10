@@ -562,9 +562,23 @@ void ConvertCSFJson(const std::filesystem::path& path) {
 
     try {
         json csfData = json::parse(file);
-        if (!csfData.contains("skills") || !csfData["skills"].is_array()) return;
+        json skillsToProcess = json::array();
 
-        for (auto& skill : csfData["skills"]) {
+        // 1. Detecta o formato do arquivo
+        if (csfData.contains("skills") && csfData["skills"].is_array()) {
+            // Formato de coleção (ex: SKILLS.json antigo ou mesclado)
+            skillsToProcess = csfData["skills"];
+        }
+        else if (csfData.contains("id") && csfData.contains("nodes")) {
+            // Formato individual (seu caso atual: Athletics.json, Sorcery.json, etc.)
+            skillsToProcess.push_back(csfData);
+        }
+        else {
+            // Não é um arquivo de skill válido
+            return;
+        }
+
+        for (auto& skill : skillsToProcess) {
             if (skill.is_string()) continue;
 
             std::string skillId = skill.value("id", path.stem().string());
@@ -576,11 +590,27 @@ void ConvertCSFJson(const std::filesystem::path& path) {
                 continue;
             }
 
+            std::map<std::string, std::string> idToPerkMap;
+            if (skill.contains("nodes") && skill["nodes"].is_array()) {
+                for (auto& node : skill["nodes"]) {
+                    std::string oldId = node.value("id", "");
+                    std::string perkStr = node.value("perk", "");
+                    if (!oldId.empty() && !perkStr.empty()) {
+                        idToPerkMap[oldId] = perkStr;
+                    }
+                }
+            }
+
             logger::info("Convertendo Custom Skill (CSF): {}", skillId);
 
             json prismaTree;
             prismaTree["name"] = skillId;
-            prismaTree["displayName"] = skill.value("name", skillId);
+            std::string displayName = skill.value("name", skillId);
+            if (skillId == "Athletics" || skillId == "HandtoHand" || skillId == "Sorcery" 
+                || skillId == "Exploration" || skillId == "Horseman" || skillId == "Philosophy") {
+                displayName = skillId; 
+            }
+            prismaTree["displayName"] = displayName;
             prismaTree["isVanilla"] = false;
             prismaTree["category"] = "Custom";
             prismaTree["color"] = "#FFFFFF";
@@ -612,12 +642,24 @@ void ConvertCSFJson(const std::filesystem::path& path) {
                     pNode["perk"] = perkStr;
                     pNode["x"] = node.value("x", 0.0f) * 10.0f + 50.0f;
                     pNode["y"] = 80.0f - (node.value("y", 0.0f) * 10.0f);
-                    pNode["links"] = node.value("links", json::array());
                     pNode["perkCost"] = 1;
-
                     pNode["name"] = node.value("name", "Unknown Perk");
                     pNode["description"] = "";
-
+                    json translatedLinks = json::array();
+                    if (node.contains("links") && node["links"].is_array()) {
+                        for (auto& link : node["links"]) {
+                            std::string linkStr = link.get<std::string>();
+                            // Se o nome do link existir no nosso mapa, trocamos pelo Perk ID
+                            if (idToPerkMap.count(linkStr)) {
+                                translatedLinks.push_back(idToPerkMap[linkStr]);
+                            }
+                            else {
+                                // Se não estiver no mapa (ex: ja é um perk id), mantém o original
+                                translatedLinks.push_back(linkStr);
+                            }
+                        }
+                    }
+                    pNode["links"] = translatedLinks;
                     // --- ENRIQUECIMENTO ---
                     // Tenta achar o perk na memória para pegar descrição e requerimentos reais
                     RE::FormID formID = ParseFormIDString(perkStr);
@@ -1140,7 +1182,8 @@ json GetSettings() {
             {"maxSkillPointsSpendablePerLevel", 10},
             {"skillCap", 100},
             {"enableLegendary", true},
-            {"refillAttributesOnLevelUp", false}
+            {"refillAttributesOnLevelUp", false},
+            {"useBaseSkillLevel", true}
         }},
         {"categories", {"Combat", "Magic", "Stealth", "Special", "Custom"}},
         {"codes", json::array({
@@ -1400,6 +1443,7 @@ std::string GetPlayerSkillsJSON() {
 
         json currentEffSettings = GetEffectiveSettings(playerLevel);
         int globalSkillCap = currentEffSettings.value("skillCap", 100);
+        bool useBaseSkill = currentEffSettings.value("useBaseSkillLevel", true);
 
         if (playerSkills) {
             hasPendingLevelUp = playerSkills->CanLevelUp();
@@ -1475,7 +1519,12 @@ std::string GetPlayerSkillsJSON() {
             if (isVanilla) {
                 RE::ActorValue av = GetActorValueFromName(skillName); // Função reaproveitada do seu cód
                 if (av != RE::ActorValue::kNone) {
-                    currentLevel = static_cast<int>(player->AsActorValueOwner()->GetActorValue(av));
+                    if (useBaseSkill) {
+                        currentLevel = static_cast<int>(player->AsActorValueOwner()->GetBaseActorValue(av));
+                    }
+                    else {
+                        currentLevel = static_cast<int>(player->AsActorValueOwner()->GetActorValue(av));
+                    }
                     if (playerSkills && playerSkills->data) {
                         uint32_t avInt = static_cast<uint32_t>(av);
                         if (avInt >= 6 && avInt <= 23) {
@@ -1493,9 +1542,18 @@ std::string GetPlayerSkillsJSON() {
             else {
                 auto mgr = Manager::GetSingleton();
                 if (mgr->playerCustomSkills.find(skillName) != mgr->playerCustomSkills.end()) {
-                    currentLevel = mgr->playerCustomSkills[skillName].currentLevel;
+                    int baseLevel = mgr->playerCustomSkills[skillName].currentLevel;
+                    int bonusLevel = mgr->playerCustomSkills[skillName].bonusLevel;
+
+                    // --- INTEGRAÇÃO DA SETTING USE_BASE_SKILL_LEVEL ---
+                    if (useBaseSkill) {
+                        currentLevel = baseLevel; // Ignora o bônus
+                    }
+                    else {
+                        currentLevel = baseLevel + bonusLevel; // Aplica o bônus
+                    }
                     float currentXP = mgr->playerCustomSkills[skillName].currentXP;
-                    float reqXP = mgr->GetRequiredXP(skillName, currentLevel);
+                    float reqXP = mgr->GetRequiredXP(skillName, baseLevel);
 
                     if (reqXP > 0.0f) {
                         float calcProgress = (currentXP / reqXP) * 100.0f;

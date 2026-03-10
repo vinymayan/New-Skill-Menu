@@ -231,7 +231,7 @@ void Manager::LoadCustomSkills() {
             customSkillsData[skill.id] = skill;
 
             if (playerCustomSkills.find(skill.id) == playerCustomSkills.end()) {
-                playerCustomSkills[skill.id] = { skill.initialLevel, 0.0f };
+                playerCustomSkills[skill.id] = { skill.initialLevel, 0.0f, 0 };
             }
 
             logger::info("Custom Skill carregada: {} (Display: {})", skill.id, skill.displayName);
@@ -414,7 +414,7 @@ float Manager::GetRequiredXP(const std::string& skillId, int level) {
         // Nível 50: ~1300 XP
         // Nível 100: ~5100 XP
         float linearPart = exp.improveMult * level;
-        float curvedPart = std::pow(level, 2.0f) * 0.5f; // Ajuste o 0.5f se quiser a curva mais/menos íngreme
+        float curvedPart = std::pow(level, 2.0f) * 0.5f; 
 
         return exp.improveOffset + linearPart + curvedPart;
     }
@@ -426,7 +426,7 @@ float Manager::GetRequiredXP(const std::string& skillId, int level) {
 
 // --- LOGICA DE SAVE / LOAD DO SKSE ---
 void Manager::Save(SKSE::SerializationInterface* a_intfc) {
-    if (!a_intfc->OpenRecord('SKIL', 1)) return;
+    if (!a_intfc->OpenRecord('SKIL', 2)) return; 
 
     std::size_t count = playerCustomSkills.size();
     a_intfc->WriteRecordData(&count, sizeof(count));
@@ -438,6 +438,7 @@ void Manager::Save(SKSE::SerializationInterface* a_intfc) {
 
         a_intfc->WriteRecordData(&state.currentLevel, sizeof(state.currentLevel));
         a_intfc->WriteRecordData(&state.currentXP, sizeof(state.currentXP));
+        a_intfc->WriteRecordData(&state.bonusLevel, sizeof(state.bonusLevel)); 
     }
 }
 
@@ -447,7 +448,7 @@ void Manager::Load(SKSE::SerializationInterface* a_intfc) {
     uint32_t length;
 
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
-        if (type == 'SKIL' && version == 1) {
+        if (type == 'SKIL') {
             std::size_t count;
             if (!a_intfc->ReadRecordData(&count, sizeof(count))) continue;
 
@@ -459,8 +460,15 @@ void Manager::Load(SKSE::SerializationInterface* a_intfc) {
                 if (!a_intfc->ReadRecordData(id.data(), idLen)) break;
 
                 CustomSkillState state;
+                state.bonusLevel = 0; // Padrão se for save antigo
+
                 if (!a_intfc->ReadRecordData(&state.currentLevel, sizeof(state.currentLevel))) break;
                 if (!a_intfc->ReadRecordData(&state.currentXP, sizeof(state.currentXP))) break;
+
+                // <--- LÊ O BÔNUS APENAS SE A VERSÃO DO SAVE FOR 2 OU MAIOR
+                if (version >= 2) {
+                    if (!a_intfc->ReadRecordData(&state.bonusLevel, sizeof(state.bonusLevel))) break;
+                }
 
                 playerCustomSkills[id] = state;
             }
@@ -471,12 +479,10 @@ void Manager::Load(SKSE::SerializationInterface* a_intfc) {
 // Limpa a memória quando o jogador vai pro menu principal ou da load em outro save
 void Manager::Revert(SKSE::SerializationInterface* a_intfc) {
     playerCustomSkills.clear();
-    // Reinicializa as skills para o nível inicial caso carreguem um save novo
     for (const auto& [id, data] : customSkillsData) {
-        playerCustomSkills[id] = { data.initialLevel, 0.0f };
+        playerCustomSkills[id] = { data.initialLevel, 0.0f, 0 }; // <--- Zera o bônus também
     }
 }
-
 // Adicione esta função no final do arquivo ou junto com os outros métodos públicos
 
 const InternalFormInfo* Manager::GetInfoByID(const std::string& type, RE::FormID id) {

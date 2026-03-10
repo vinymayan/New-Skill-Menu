@@ -145,52 +145,53 @@ if(NOT ${CMAKE_BUILD_TYPE} STREQUAL "Debug")
 endif()
 
 if(DEV_SERVER)
-
-add_compile_definitions(DEV_SERVER)
-set(PRISMA_UI_DIR ${CMAKE_BINARY_DIR}/PrismaUI)
-add_custom_command(
-    OUTPUT ${PRISMA_UI_DIR}
-    COMMAND ${CMAKE_COMMAND} -E rm -rf ${PRISMA_UI_DIR}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${PRISMA_UI_DIR}
-)
-add_custom_target(dev_prisma_ui ALL DEPENDS ${PRISMA_UI_DIR})
+    add_compile_definitions(DEV_SERVER)
+    set(PRISMA_UI_DIR ${CMAKE_BINARY_DIR}/PrismaUI)
+    
+    # Cria a pasta vazia para o modo Dev
+    add_custom_command(
+        OUTPUT ${PRISMA_UI_DIR}
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${PRISMA_UI_DIR}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${PRISMA_UI_DIR}
+    )
+    
+    # Define o alvo build_ui diretamente aqui para o modo DEV
+    add_custom_target(build_ui ALL DEPENDS ${PRISMA_UI_DIR})
 
 else()
+    set(UI_DIR ${CMAKE_SOURCE_DIR}/ui)
+    set(UI_BUILD_DIR ${UI_DIR}/dist)
+    set(UI_OUTPUT_DIR ${CMAKE_BINARY_DIR}/PrismaUI/views/${PRODUCT_NAME})
 
+    file(GLOB_RECURSE UI_SOURCES
+        ${UI_DIR}/*
+    )
 
-set(UI_DIR ${CMAKE_SOURCE_DIR}/ui)
-set(UI_BUILD_DIR ${UI_DIR}/dist)
-set(UI_OUTPUT_DIR ${CMAKE_BINARY_DIR}/PrismaUI/views/${PRODUCT_NAME})
+    list(FILTER UI_SOURCES EXCLUDE REGEX ".*/dist/.*")
+    list(FILTER UI_SOURCES EXCLUDE REGEX ".*/node_modules/.*")
 
-file(GLOB_RECURSE UI_SOURCES
-    ${UI_DIR}/*
-)
+    add_custom_command(
+        OUTPUT ${UI_BUILD_DIR}
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${UI_OUTPUT_DIR}
+        COMMAND npm install
+        COMMAND npm run build
+        WORKING_DIRECTORY ${UI_DIR}
+        DEPENDS ${UI_SOURCES}
+    )
 
-list(FILTER UI_SOURCES EXCLUDE REGEX ".*/dist/.*")
-list(FILTER UI_SOURCES EXCLUDE REGEX ".*/node_modules/.*")
+    add_custom_command(
+        OUTPUT ${UI_OUTPUT_DIR}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${UI_OUTPUT_DIR}
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${UI_BUILD_DIR} ${UI_OUTPUT_DIR}
+        DEPENDS ${UI_BUILD_DIR}
+    )
 
-add_custom_command(
-    OUTPUT ${UI_BUILD_DIR}
-    COMMAND ${CMAKE_COMMAND} -E rm -rf ${UI_OUTPUT_DIR}
-    COMMAND npm install
-    COMMAND npm run build
-    WORKING_DIRECTORY ${UI_DIR}
-    DEPENDS ${UI_SOURCES}
-)
-
-add_custom_command(
-    OUTPUT ${UI_OUTPUT_DIR}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${UI_OUTPUT_DIR}
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${UI_BUILD_DIR} ${UI_OUTPUT_DIR}
-    DEPENDS ${UI_BUILD_DIR}
-)
+    # Define o alvo build_ui aqui para o modo Produção
+    add_custom_target(build_ui ALL DEPENDS ${UI_OUTPUT_DIR})
 
 endif()
 
-add_custom_target(build_ui ALL
-    DEPENDS ${UI_OUTPUT_DIR}
-)
-
+# Conecta a dependência (agora build_ui existe corretamente nos dois casos)
 add_dependencies(${PROJECT_NAME} build_ui)
 
 # ---------------------------------------------------- #

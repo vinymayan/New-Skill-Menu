@@ -65,6 +65,7 @@
       "skill_cap": "Skill Cap (Max Level):",
       "enable_legendary": "Enable Legendary?",
       "refill_attributes": "Refill Attributes on Level Up?",
+      "use_base_skill_level": "Use Base Skill Level for Reqs (Ignore Buffs)?",
       "skill_points_per_level": "Skill Points/Level:",
       "max_spendable": "Max Skill Points Spendable/Level:",
       "reset_all_btn": "⚠ RESET ALL PERKS (REFUND POINTS)"

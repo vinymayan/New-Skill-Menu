@@ -46,6 +46,7 @@ struct CustomSkill {
 struct CustomSkillState {
     int currentLevel = 15;
     float currentXP = 0.0f;
+    int bonusLevel = 0;
 };
 
 class Manager {

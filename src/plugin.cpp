@@ -10,13 +10,13 @@ extern void ApplyVanillaInitialLevels();
 extern "C" __declspec(dllexport) void* GetSkillMenuAPI() {
     static SkillMenuAPI::Interface api{
         SkillMenuAPI::Version,
-        // GetCustomSkillLevel
+        // GetCustomSkillLevel (Retorna o Base)
         [](const char* skillId) -> int {
             auto mgr = Manager::GetSingleton();
             if (mgr->playerCustomSkills.find(skillId) != mgr->playerCustomSkills.end()) {
                 return mgr->playerCustomSkills[skillId].currentLevel;
             }
-            return 1; // Fallback se a skill não existir
+            return 1;
         },
         // AddCustomSkillXP
         [](const char* skillId, float xpAmount) {
@@ -30,7 +30,7 @@ extern "C" __declspec(dllexport) void* GetSkillMenuAPI() {
             }
             return 0.0f;
         },
-        // NOVO: GetSkillFormulaValue
+        // GetSkillFormulaValue
         [](const char* skillId, int valueType) -> float {
             auto& data = Manager::GetSingleton()->customSkillsData;
             if (data.contains(skillId)) {
@@ -44,6 +44,40 @@ extern "C" __declspec(dllexport) void* GetSkillMenuAPI() {
                 }
             }
             return 0.0f;
+        },
+        // --- V2 API ---
+        // GetCustomSkillTotalLevel
+        [](const char* skillId) -> int {
+            auto mgr = Manager::GetSingleton();
+            if (mgr->playerCustomSkills.find(skillId) != mgr->playerCustomSkills.end()) {
+                auto& state = mgr->playerCustomSkills[skillId];
+                return state.currentLevel + state.bonusLevel;
+            }
+            return 1;
+        },
+        // GetCustomSkillBonus
+        [](const char* skillId) -> int {
+            auto mgr = Manager::GetSingleton();
+            if (mgr->playerCustomSkills.find(skillId) != mgr->playerCustomSkills.end()) {
+                return mgr->playerCustomSkills[skillId].bonusLevel;
+            }
+            return 0;
+        },
+        // ModCustomSkillBonus
+        [](const char* skillId, int amount) {
+            auto mgr = Manager::GetSingleton();
+            if (mgr->playerCustomSkills.find(skillId) != mgr->playerCustomSkills.end()) {
+                mgr->playerCustomSkills[skillId].bonusLevel += amount;
+                Prisma::SendUpdateToUI(); // Atualiza a UI se o menu estiver aberto
+            }
+        },
+        // SetCustomSkillBonus
+        [](const char* skillId, int amount) {
+            auto mgr = Manager::GetSingleton();
+            if (mgr->playerCustomSkills.find(skillId) != mgr->playerCustomSkills.end()) {
+                mgr->playerCustomSkills[skillId].bonusLevel = amount;
+                Prisma::SendUpdateToUI(); // Atualiza a UI se o menu estiver aberto
+            }
         }
     };
     return &api;
@@ -77,6 +111,24 @@ namespace PapyrusAPI {
     float GetCustomSkillXP(RE::StaticFunctionTag*, RE::BSFixedString skillId) {
         return Manager::GetSingleton()->playerCustomSkills[skillId.c_str()].currentXP;
     }
+
+    // --- V2 Papyrus ---
+    int GetCustomSkillTotalLevel(RE::StaticFunctionTag*, RE::BSFixedString skillId) {
+        auto& state = Manager::GetSingleton()->playerCustomSkills[skillId.c_str()];
+        return state.currentLevel + state.bonusLevel;
+    }
+    int GetCustomSkillBonus(RE::StaticFunctionTag*, RE::BSFixedString skillId) {
+        return Manager::GetSingleton()->playerCustomSkills[skillId.c_str()].bonusLevel;
+    }
+    void ModCustomSkillBonus(RE::StaticFunctionTag*, RE::BSFixedString skillId, int amount) {
+        Manager::GetSingleton()->playerCustomSkills[skillId.c_str()].bonusLevel += amount;
+        Prisma::SendUpdateToUI();
+    }
+    void SetCustomSkillBonus(RE::StaticFunctionTag*, RE::BSFixedString skillId, int amount) {
+        Manager::GetSingleton()->playerCustomSkills[skillId.c_str()].bonusLevel = amount;
+        Prisma::SendUpdateToUI();
+    }
+
     int GetAPIVersion(RE::StaticFunctionTag*) {
         return SkillMenuAPI::Version;
     }
@@ -86,6 +138,13 @@ namespace PapyrusAPI {
         vm->RegisterFunction("GetCustomSkillLevel", "NewSkillMenu", GetCustomSkillLevel);
         vm->RegisterFunction("GetCustomSkillXP", "NewSkillMenu", GetCustomSkillXP);
         vm->RegisterFunction("GetSkillFormulaValue", "NewSkillMenu", GetSkillFormulaValue);
+
+        // Registrar V2
+        vm->RegisterFunction("GetCustomSkillTotalLevel", "NewSkillMenu", GetCustomSkillTotalLevel);
+        vm->RegisterFunction("GetCustomSkillBonus", "NewSkillMenu", GetCustomSkillBonus);
+        vm->RegisterFunction("ModCustomSkillBonus", "NewSkillMenu", ModCustomSkillBonus);
+        vm->RegisterFunction("SetCustomSkillBonus", "NewSkillMenu", SetCustomSkillBonus);
+
         vm->RegisterFunction("GetAPIVersion", "NewSkillMenu", GetAPIVersion);
         return true;
     }
