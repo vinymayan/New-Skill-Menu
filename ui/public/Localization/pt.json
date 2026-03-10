@@ -141,6 +141,7 @@
     "connecting_overlay": "Selecione o alvo... (Botão Direito para cancelar)",
     "alert_select_native": "Selecione uma Skill/Perk nativa primeiro!",
     "new_manual_rank_name": "Novo Rank Manual",
+    "move_tree_hint": "Shift + Arrastar o fundo para mover a árvore inteira",
     "context": {
       "connect": "Conectar com outro Perk",
       "create_connected": "Criar novo Perk conectado",

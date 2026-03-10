@@ -141,6 +141,7 @@
     "connecting_overlay": "Select target... (Right Click to cancel)",
     "alert_select_native": "Please select a native Skill/Perk first!",
     "new_manual_rank_name": "New Manual Rank",
+    "move_tree_hint": "Shift + Drag background to move the whole tree",
     "context": {
       "connect": "Connect with another Perk",
       "create_connected": "Create new connected Perk",

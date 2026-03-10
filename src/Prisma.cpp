@@ -723,7 +723,9 @@ void ConvertLegacyConfig(const std::filesystem::path& path) {
         std::string perkFile = "";
         float x = 0.0f;
         float y = 0.0f;
-        std::string rawLinks = ""; // String "2,3"
+        float gridX = 0.0f; // NOVO: Capturar GridX
+        float gridY = 0.0f; // NOVO: Capturar GridY
+        std::string rawLinks = ""; // String "2,3" ou "2 3"
     };
     std::map<int, RawNode> rawNodes;
 
@@ -807,6 +809,8 @@ void ConvertLegacyConfig(const std::filesystem::path& path) {
                     }
                     if (key == "X") rawNodes[nodeIdx].x = std::stof(val);
                     if (key == "Y") rawNodes[nodeIdx].y = std::stof(val);
+                    if (key == "GridX") rawNodes[nodeIdx].gridX = std::stof(val);
+                    if (key == "GridY") rawNodes[nodeIdx].gridY = std::stof(val);
                     if (key == "Links") rawNodes[nodeIdx].rawLinks = val;
                 }
             }
@@ -853,17 +857,27 @@ void ConvertLegacyConfig(const std::filesystem::path& path) {
         json n;
         std::string fID = nodeIndexToID[idx];
 
+        // CÁLCULO CORRIGIDO: Grid + Offset
+        float trueX = data.gridX + data.x;
+        float trueY = data.gridY + data.y;
+
         n["id"] = fID;
         n["perk"] = fID;
-        n["x"] = data.x * 10.0f + 50.0f;
-        n["y"] = 80.0f - (data.y * 10.0f);
+        n["x"] = trueX * 10.0f + 50.0f;
+        n["y"] = 60.0f - (trueY * 10.0f);
         n["perkCost"] = 1;
-        n["description"] = ""; // Inicializa vazio
+        n["description"] = "";
 
         json links = json::array();
         if (!data.rawLinks.empty()) {
-            std::vector<std::string> linkIndexes = split(data.rawLinks, ',');
+            // CORREÇÃO DOS LINKS: Substituir espaços por vírgulas
+            std::string safeLinks = data.rawLinks;
+            std::replace(safeLinks.begin(), safeLinks.end(), ' ', ',');
+
+            std::vector<std::string> linkIndexes = split(safeLinks, ',');
             for (const auto& sIdx : linkIndexes) {
+                if (sIdx.empty()) continue; // Ignora espaços em branco vazios " "
+
                 try {
                     std::string cleanIdx = sIdx;
                     cleanIdx.erase(std::remove(cleanIdx.begin(), cleanIdx.end(), '"'), cleanIdx.end());

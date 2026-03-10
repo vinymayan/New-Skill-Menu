@@ -4,8 +4,7 @@ import useEmblaCarousel from 'embla-carousel-react';
 import { SketchPicker } from 'react-color';
 import './App.css';
 import { t, setLanguage, addTranslation, hasTranslation, type Language } from './lib/locales';
-import { Stage, Layer, Line, Circle, Group, Image as KonvaImage, Text as KonvaText } from 'react-konva';
-import useImage from 'use-image'
+import { Stage, Layer, Line, Circle, Group, Image as KonvaImage, Text as KonvaText, Rect } from 'react-konva';
 import Konva from 'konva';
 // --- Interfaces ---
 interface Requirement {
@@ -827,16 +826,19 @@ const PlayerHeader = ({ player }: { player: PlayerData }) => {
     );
 };
 
-const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setHoveredPerk, onNodeClick }: {
+const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setHoveredPerk, onNodeClick, hidePerkNames }: {
     node: PerkNode,
     treeColor: string,
     iconPerkPath?: string,
     width: number,
     height: number,
     setHoveredPerk?: (p: PerkNode | null) => void,
-    onNodeClick?: (node: PerkNode) => void
+    onNodeClick?: (node: PerkNode) => void,
+    hidePerkNames?: boolean
 }) => {
     const groupRef = useRef<Konva.Group>(null);
+    // Nova referência necessária para poder colorir o ícone sem bugar as sombras do Canvas
+    const iconGroupRef = useRef<Konva.Group>(null);
 
     // Calcula posições em PIXELS baseados na porcentagem
     const x = (node.x / 100) * width;
@@ -846,27 +848,22 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
     const iconSource = useValidImage(node.icon || iconPerkPath, DEFAULT_PERK_ICON);
     const [image] = useCustomImage(iconSource);
 
-    // Estados de cor (Mesma lógica anterior)
+    // Estados de cor
     const isMaxed = useMemo(() => {
         if (!node.isUnlocked) return false;
         if (!node.nextRanks || node.nextRanks.length === 0) return true;
         return node.nextRanks.every(rank => rank.isUnlocked);
     }, [node]);
 
-    let strokeColor = 'rgba(255,255,255,0.2)';
-    let fillColor = 'rgba(0,0,0,0.8)';
+
+
     let iconOpacity = 0.5;
 
     if (isMaxed) {
-        strokeColor = treeColor;
-        fillColor = treeColor;
         iconOpacity = 1;
     } else if (node.isUnlocked) {
-        strokeColor = treeColor;
-        fillColor = 'rgba(0,0,0,0.9)';
         iconOpacity = 1;
     } else if (node.canUnlock) {
-        strokeColor = '#ffd700';
         iconOpacity = 0.8;
     }
 
@@ -880,15 +877,12 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
 
         const nodeGroup = groupRef.current;
         if (nodeGroup) {
-            // Traz para frente (Z-Index)
             nodeGroup.moveToTop();
-
-            // Animação de Escala (Substitui CSS transform: scale(1.2))
             nodeGroup.to({
                 scaleX: 1.3,
                 scaleY: 1.3,
-                duration: 0.2, // segundos
-                easing: Konva.Easings.BackEaseOut, // Efeito "elástico" suave
+                duration: 0.2,
+                easing: Konva.Easings.BackEaseOut,
                 shadowBlur: 15,
                 shadowOpacity: 0.8
             });
@@ -901,7 +895,6 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
 
         const nodeGroup = groupRef.current;
         if (nodeGroup) {
-            // Retorna ao tamanho original
             nodeGroup.to({
                 scaleX: 1,
                 scaleY: 1,
@@ -913,12 +906,11 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
         }
     };
 
-    // Aplica o cache inicial após montar
+    // Aplica o cache inicial. O Konva precisa do cache ativado para pintar o SVG usando source-in corretamente.
     useEffect(() => {
-        if (groupRef.current) {
-            groupRef.current.cache();
-        }
-    }, [image, isMaxed, node.isUnlocked]); // Re-cache se a imagem carregar ou status mudar
+        if (iconGroupRef.current) iconGroupRef.current.cache();
+        if (groupRef.current) groupRef.current.cache();
+    }, [image, isMaxed, node.isUnlocked]);
 
     return (
         <Group
@@ -932,50 +924,51 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
                 onNodeClick?.(node);
             }}
         >
-            {/* Círculo invisível para Hitbox e Glow */}
+            {/* 1. RESTAURAMOS A COR DE FUNDO E BORDA AQUI */}
             <Circle
                 radius={nodeSize / 2}
-                fill="transparent"  /* Fundo Transparente */
-                stroke="transparent" /* Borda Transparente */
-                strokeWidth={0}      /* Sem largura de linha */
-
-                /* Mantemos o shadow se quiser que o ícone pareça brilhar, 
-                   mas aplicamos apenas quando desbloqueado */
                 shadowColor={treeColor}
                 shadowBlur={node.isUnlocked ? 20 : 0}
                 shadowOpacity={node.isUnlocked ? 0.6 : 0}
             />
 
-            {/* Ícone (Agora é o elemento principal visual) */}
+            {/* 2. TRUQUE DO KONVA PARA COLORIR O SVG */}
             {image && (
-                <KonvaImage
-                    image={image}
-                    width={iconSize}
-                    height={iconSize}
-                    x={-iconSize / 2}
-                    y={-iconSize / 2}
-                    opacity={iconOpacity}
-                    globalCompositeOperation={isMaxed ? 'source-over' : 'source-over'}
-                />
+                <Group ref={iconGroupRef} x={-iconSize / 2} y={-iconSize / 2}>
+                    <KonvaImage
+                        image={image}
+                        width={iconSize}
+                        height={iconSize}
+                        opacity={iconOpacity}
+                    />
+                    {/* Se estiver no nível máximo, pintamos os pixels visíveis do SVG com a cor da árvore */}
+                    {isMaxed && (
+                        <Rect
+                            width={iconSize}
+                            height={iconSize}
+                            fill={treeColor}
+                            globalCompositeOperation="source-in"
+                        />
+                    )}
+                </Group>
             )}
 
-            {/* Nome do Perk */}
-            {(node.isUnlocked || node.canUnlock) && (
-                <KonvaText
-                    text={node.name.toUpperCase()}
-                    y={25}
-                    fontSize={14}
-                    fontFamily="Sovngarde"
-                    fill="white"
-                    align="center"
-                    width={200}
-                    x={-100}
-                    shadowColor="black"
-                    shadowBlur={2}
-                    opacity={node.isUnlocked ? 1 : 0.7}
-                    listening={false}
-                />
-            )}
+            {/*{!hidePerkNames && (*/}
+            {/*    <KonvaText*/}
+            {/*        text={node.name.toUpperCase()}*/}
+            {/*        y={25}*/}
+            {/*        fontSize={14}*/}
+            {/*        fontFamily="Sovngarde"*/}
+            {/*        fill="white"*/}
+            {/*        align="center"*/}
+            {/*        width={200}*/}
+            {/*        x={-100}*/}
+            {/*        shadowColor="black"*/}
+            {/*        shadowBlur={2}*/}
+            {/*        opacity={node.isUnlocked || node.canUnlock ? 1 : 0.6}*/}
+            {/*        listening={false}*/}
+            {/*    />*/}
+            {/*)}*/}
         </Group>
     );
 });
@@ -1061,57 +1054,48 @@ const PerkNodeElement = memo(({ node, treeColor, iconPerkPath, isPreview, isEdit
     );
 });
 
-const TreeCanvasLayer = memo(({ nodes, treeColor, width, height, isEditorMode, iconPerkPath, setHoveredPerk, onNodeClick }: {
-    nodes: PerkNode[], treeColor: string, width: number, height: number, isEditorMode: boolean,
-    iconPerkPath?: string, setHoveredPerk?: (p: PerkNode | null) => void, onNodeClick?: (n: PerkNode) => void
+const TreeCanvasLayer = memo(({ nodes, treeColor, width, height, bounds }: {
+    nodes: PerkNode[], treeColor: string, width: number, height: number,
+    bounds: { minX: number, maxX: number, minY: number, maxY: number }
 }) => {
     if (width === 0 || height === 0) return null;
+    const worldWidth = (bounds.maxX - bounds.minX + 20) * (width / 100);
+    const worldHeight = (bounds.maxY - bounds.minY + 20) * (height / 100);
 
     return (
         <Stage
-            width={width}
-            height={height}
-            style={{ position: 'absolute', top: 0, left: 0, pointerEvents: isEditorMode ? 'none' : 'auto' }}
+            width={worldWidth}
+            height={worldHeight}
+            style={{
+                position: 'absolute',
+                left: `${bounds.minX * (width / 100)}px`,
+                top: `${bounds.minY * (height / 100)}px`,
+                pointerEvents: 'none' // Linhas não devem bloquear o mouse dos nodos HTML
+            }}
         >
             <Layer>
-                {/* 1. LINHAS (Sempre desenhadas no Canvas) */}
                 {nodes.map(node => node.links.map(targetId => {
                     const targetNode = nodes.find(n => n.id === targetId);
                     if (!targetNode) return null;
-
                     const isCompleted = node.isUnlocked && targetNode.isUnlocked;
-                    const x1 = (node.x / 100) * width;
-                    const y1 = (node.y / 100) * height;
-                    const x2 = (targetNode.x / 100) * width;
-                    const y2 = (targetNode.y / 100) * height;
+                    const isPathRevealed = node.isUnlocked;
+
+                    const x1 = ((node.x - bounds.minX) / 100) * width;
+                    const y1 = ((node.y - bounds.minY) / 100) * height;
+                    const x2 = ((targetNode.x - bounds.minX) / 100) * width;
+                    const y2 = ((targetNode.y - bounds.minY) / 100) * height;
 
                     return (
                         <Line
                             key={`link-${node.id}-${targetId}`}
                             points={[x1, y1, x2, y2]}
-                            stroke={isCompleted ? treeColor : 'rgba(255, 255, 255, 0.1)'}
+                            stroke={isCompleted ? treeColor : (isPathRevealed ? 'rgba(255, 255, 255, 0.5)' : 'rgba(255, 255, 255, 0.1)')}
                             strokeWidth={isCompleted ? 4 : 2}
                             dash={isCompleted ? [] : [5, 5]}
-                            lineCap="round"
-                            lineJoin="round"
                             listening={false}
                         />
                     );
                 }))}
-
-                {/* 2. NODOS (Desenhados no Canvas APENAS se NÃO for Editor Mode) */}
-                {!isEditorMode && nodes.map(node => (
-                    <KonvaPerkNode
-                        key={`knode-${node.id}`}
-                        node={node}
-                        treeColor={treeColor}
-                        iconPerkPath={iconPerkPath}
-                        width={width}
-                        height={height}
-                        setHoveredPerk={setHoveredPerk}
-                        onNodeClick={onNodeClick}
-                    />
-                ))}
             </Layer>
         </Stage>
     );
@@ -1167,38 +1151,64 @@ const TreeVisualNodes = memo(({ treeData, isPreview, isEditorMode,
         treeData: SkillTreeData,
         isPreview: boolean,
         isEditorMode: boolean,
-        containerWidth: number, // New Prop
-        containerHeight: number, // New Prop
+        containerWidth: number,
+        containerHeight: number,
         uiSettings?: UISettings | null,
         setHoveredPerk?: (p: PerkNode | null) => void,
         onNodeClick?: (node: PerkNode) => void
     }) => {
+
     const { nodes, color, name, iconPerkPath } = treeData;
     const treeColor = color || DEFAULT_COLOR;
 
+    if (containerWidth === 0 || containerHeight === 0) return null;
+
     return (
-        <>
-            <TreeConnections
-                nodes={nodes}
-                treeColor={treeColor}
-                width={containerWidth}
-                height={containerHeight}
-            />
-            {nodes.map(node => (
-                <PerkNodeElement
-                    key={node.id}
-                    node={node}
-                    treeName={name}
-                    treeColor={treeColor}
-                    iconPerkPath={iconPerkPath}
-                    isPreview={isPreview}
-                    isEditorMode={isEditorMode}
-                    setHoveredPerk={setHoveredPerk}
-                    onNodeClick={onNodeClick}
-                    uiSettings={uiSettings}
-                />
-            ))}
-        </>
+        <Stage width={containerWidth} height={containerHeight} style={{ pointerEvents: 'none' }}>
+            <Layer>
+                {/* 1. Renderiza as linhas via Canvas */}
+                {nodes.map(node => node.links.map(targetId => {
+                    const targetNode = nodes.find(n => n.id === targetId);
+                    if (!targetNode) return null;
+
+                    const isCompleted = node.isUnlocked && targetNode.isUnlocked;
+                    const isPathRevealed = node.isUnlocked;
+
+                    const x1 = (node.x / 100) * containerWidth;
+                    const y1 = (node.y / 100) * containerHeight;
+                    const x2 = (targetNode.x / 100) * containerWidth;
+                    const y2 = (targetNode.y / 100) * containerHeight;
+
+                    return (
+                        <Line
+                            key={`${node.id}-${targetId}`}
+                            points={[x1, y1, x2, y2]}
+                            stroke={isCompleted ? treeColor : (isPathRevealed ? 'rgba(255, 255, 255, 0.5)' : 'rgba(255, 255, 255, 0.1)')}
+                            strokeWidth={isCompleted ? 4 : 2}
+                            dash={isCompleted ? [] : [5, 5]}
+                            lineCap="round"
+                            lineJoin="round"
+                            listening={false}
+                        />
+                    );
+                }))}
+
+                {/* 2. Renderiza os Nodos usando o Konva na Preview */}
+                {nodes.map(node => (
+                    <KonvaPerkNode
+                        key={`knode-${node.id}`}
+                        node={node}
+                        treeColor={treeColor}
+                        iconPerkPath={iconPerkPath}
+                        width={containerWidth}
+                        height={containerHeight}
+                        setHoveredPerk={setHoveredPerk}
+                        onNodeClick={onNodeClick}
+                        hidePerkNames={uiSettings?.hidePerkNames}
+                    />
+                ))}
+            </Layer>
+        </Stage>
     );
 });
 
@@ -1425,7 +1435,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
     }) => {
     const detailBg = useValidImage(treeData.bgPath, DEFAULT_BG);
     const treeColor = treeData.color || DEFAULT_COLOR;
-
+    const [treeBounds, setTreeBounds] = useState({ minX: 0, maxX: 100, minY: 0, maxY: 100 });
     const containerRef = useRef<HTMLDivElement>(null);
     const { width: containerWidth, height: containerHeight } = useElementSize(containerRef);
     const [zoom, setZoom] = useState(1);
@@ -1433,6 +1443,9 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
 
     const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
     const dragStartCanvas = useRef({ x: 0, y: 0 });
+    const isDraggingTree = useRef(false);
+    const dragStartTree = useRef({ x: 0, y: 0 });
+    const initialTreeNodesRef = useRef<PerkNode[]>([]);
 
     const [hoveredPerk, setHoveredPerk] = useState<PerkNode | null>(null);
     const hoverTimeoutRef = useRef<any>(null);
@@ -1451,6 +1464,26 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
     const isLegendaryEnabled = globalSettings?.base.enableLegendary !== false;
     const canLegendary = isLegendaryEnabled && treeData.currentLevel >= hardCap;
     const resetLevel = treeData.initialLevel || 15;
+
+    useEffect(() => {
+        // Mantemos apenas o cálculo dos limites para o Canvas não "cortar" os ícones
+        if (treeData.nodes.length === 0) return;
+
+        let minX = 0, maxX = 100, minY = 0, maxY = 100;
+
+        treeData.nodes.forEach(node => {
+            if (node.x < minX) minX = node.x;
+            if (node.x > maxX) maxX = node.x;
+            if (node.y < minY) minY = node.y;
+            if (node.y > maxY) maxY = node.y;
+        });
+
+        setTreeBounds({ minX, maxX, minY, maxY });
+
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+
+    }, [treeData.name]); // Roda apenas quando muda de árvore
 
     useEffect(() => {
         if (hoveredPerk) {
@@ -1503,6 +1536,17 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
         const isNodeClick = (e.target as HTMLElement).closest('.perk-node-container');
         if (isNodeClick) return;
 
+        // --- NOVA LÓGICA: MOVER A ÁRVORE INTEIRA (Shift + Left Click) ---
+        if (isEditorMode && e.button === 0 && e.shiftKey) {
+            isDraggingTree.current = true;
+            dragStartTree.current = { x: e.clientX, y: e.clientY };
+            // Salva as posições originais antes de começar a arrastar para evitar "drift" (acúmulo de erros de cálculo)
+            initialTreeNodesRef.current = JSON.parse(JSON.stringify(treeData.nodes));
+            setContextMenu(null);
+            e.preventDefault();
+            return;
+        }
+
         const isPanningAction = e.button === 1 || (e.button === 0 && e.ctrlKey) || (e.button === 0 && isEditorMode);
 
         if (isPanningAction) {
@@ -1514,6 +1558,32 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
     };
 
     const handleCanvasMouseMove = (e: React.MouseEvent) => {
+        // --- NOVA LÓGICA: APLICAR O ARRASTO NA ÁRVORE INTEIRA ---
+        if (isDraggingTree.current && containerRef.current && isEditorMode) {
+            const containerRect = containerRef.current.parentElement!.getBoundingClientRect();
+
+            // Calcula o quanto o mouse moveu em pixels desde o início do clique
+            const dxPixels = e.clientX - dragStartTree.current.x;
+            const dyPixels = e.clientY - dragStartTree.current.y;
+
+            // Converte esse movimento de pixels para porcentagem (%) baseada no zoom
+            const dxPercent = (dxPixels / (containerRect.width * zoom)) * 100;
+            const dyPercent = (dyPixels / (containerRect.height * zoom)) * 100;
+
+            // Aplica a diferença às posições originais salvas
+            const newNodes = initialTreeNodesRef.current.map(node => ({
+                ...node,
+                x: node.x + dxPercent,
+                y: node.y + dyPercent
+            }));
+
+            // Atualiza o estado global da árvore em tempo real
+            if (onUpdateNodes) {
+                onUpdateNodes(treeData.name, newNodes);
+            }
+            return;
+        }
+
         if (isDraggingCanvas) {
             setPan({ x: e.clientX - dragStartCanvas.current.x, y: e.clientY - dragStartCanvas.current.y });
             return;
@@ -1530,13 +1600,21 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
             onUpdateNodePosition(
                 treeData.name,
                 draggingNodeId,
-                Math.max(0, Math.min(100, xPercent)),
+                Math.max(0, Math.min(100, xPercent)), // Impede node individual de sair do 0-100 (se quiser liberar isso, remova o Math.max/min)
                 Math.max(0, Math.min(100, yPercent))
             );
         }
     };
 
     const handleCanvasMouseUp = () => {
+        // --- NOVA LÓGICA: FINALIZAR ARRASTO DA ÁRVORE ---
+        if (isDraggingTree.current) {
+            isDraggingTree.current = false;
+            // Limpa a referência para economizar memória
+            initialTreeNodesRef.current = [];
+            return;
+        }
+
         setIsDraggingCanvas(false);
         setDraggingNodeId(null);
         setTimeout(() => { hasDraggedNode.current = false; }, 50);
@@ -1664,7 +1742,20 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
         >
             {/* OTIMIZAÇÃO: pointerEvents: none em elementos visuais desnecessários de escuta */}
             <div className="skill-detail-bg" style={{ backgroundImage: `url('${detailBg}')`, pointerEvents: 'none' }}></div>
-
+            {isEditorMode && (
+                <div style={{
+                    position: 'absolute',
+                    bottom: '20px', /* Ficará no canto inferior esquerdo da tela da constelação */
+                    left: '30px',
+                    color: 'rgba(255,255,255,0.4)',
+                    fontSize: '1.5rem',
+                    fontFamily: 'Sovngarde, Arial, sans-serif',
+                    pointerEvents: 'none',
+                    zIndex: 10
+                }}>
+                    {t('perk_editor.move_tree_hint')}
+                </div>
+            )}
             <div className="tree-title" style={{ '--tree-glow': treeColor } as React.CSSProperties}>
                 {canLegendary && !isEditorMode && (
                     <div
@@ -1690,20 +1781,17 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                 onMouseLeave={handleCanvasMouseUp}
                 style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: '0 0', width: '100%', height: '100%', willChange: 'transform' }}>
 
-                {/* UNIFICADO: Renderiza Linhas E Nodos (se !isEditorMode) */}
+
                 <TreeCanvasLayer
                     nodes={treeData.nodes}
                     treeColor={treeColor}
                     width={containerWidth}
                     height={containerHeight}
-                    isEditorMode={isEditorMode} // Se true, o Canvas desenha só linhas
-                    iconPerkPath={treeData.iconPerkPath}
-                    setHoveredPerk={handlePerkNodeHover}
-                    onNodeClick={handlePerkNodeClick}
+                    bounds={treeBounds}
                 />
 
-                {/* MODO EDITOR: Renderiza Nodos HTML por cima para permitir Drag/ContextMenu */}
-                {isEditorMode && treeData.nodes.map((node) => (
+
+                {treeData.nodes.map((node) => (
                     <PerkNodeElement
                         key={node.id}
                         node={node}
@@ -1711,7 +1799,8 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                         treeColor={treeColor}
                         iconPerkPath={treeData.iconPerkPath}
                         isPreview={false}
-                        isEditorMode={true} // Força modo editor
+                        isEditorMode={isEditorMode} // Modo normal ou editor
+                        isKeyboardSelected={keyboardSelectedNodeId === node.id}
                         setHoveredPerk={handlePerkNodeHover}
                         uiSettings={uiSettings}
                         onStartDrag={handleNodeStartDrag}
@@ -2185,10 +2274,53 @@ const BottomSkillGrid = ({ trees, uiSettings, onHoverSkill, onClickSkill, onCont
     onContextMenu: (e: React.MouseEvent, name: string) => void
 }) => {
     const scrollRef = useRef<HTMLDivElement>(null);
+    const isDragging = useRef(false);
+    const hasDragged = useRef(false);
+    const startX = useRef(0);
+    const scrollLeft = useRef(0);
+
     const handleWheel = (e: React.WheelEvent) => { if (scrollRef.current) scrollRef.current.scrollLeft += e.deltaY; };
     const isEditorActive = uiSettings?.enableEditorMode || false;
+    const handleMouseDown = (e: React.MouseEvent) => {
+        if (!scrollRef.current) return;
+        isDragging.current = true;
+        hasDragged.current = false;
+        startX.current = e.pageX - scrollRef.current.offsetLeft;
+        scrollLeft.current = scrollRef.current.scrollLeft;
+    };
+
+    const handleMouseMove = (e: React.MouseEvent) => {
+        if (!isDragging.current || !scrollRef.current) return;
+        e.preventDefault();
+        const x = e.pageX - scrollRef.current.offsetLeft;
+        const walk = (x - startX.current) * 1.5; // Multiplicador de velocidade
+
+        // Se moveu mais que 5 pixels, considera que está arrastando (evita cliques acidentais)
+        if (Math.abs(walk) > 5) {
+            hasDragged.current = true;
+        }
+        scrollRef.current.scrollLeft = scrollLeft.current - walk;
+    };
+
+    const handleMouseUp = () => {
+        isDragging.current = false;
+    };
+
+    const handleMouseLeave = () => {
+        isDragging.current = false;
+        onHoverSkill(null);
+    };
+
     return (
-        <div className="bottom-skills-grid" ref={scrollRef} onMouseLeave={() => onHoverSkill(null)} onWheel={handleWheel}>
+        <div
+            className="bottom-skills-grid"
+            ref={scrollRef}
+            onWheel={handleWheel}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseLeave}
+        >
             {trees.map((tree, index) => {
                 const isLocked = tree.treeRequirements && tree.treeRequirements.some(req => req.isMet === false);
                 const hideName = isLocked && (uiSettings?.hideLockedTreeNames ?? true);
@@ -2196,10 +2328,19 @@ const BottomSkillGrid = ({ trees, uiSettings, onHoverSkill, onClickSkill, onCont
 
                 return (
                     <div key={`${tree.name}-${index}`} className={`bottom-grid-item ${isLocked ? 'bottom-locked' : ''}`}
-                        onMouseEnter={() => onHoverSkill(tree.name)}
-                        onClick={() => { if (!isLocked || isEditorActive) onClickSkill(tree.name); }}
+                        onMouseEnter={() => !isDragging.current && onHoverSkill(tree.name)}
+                        onClick={(e) => {
+                            // Ignora o clique se o usuário estava arrastando a barra
+                            if (hasDragged.current) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                return;
+                            }
+                            if (!isLocked || isEditorActive) onClickSkill(tree.name);
+                        }}
                         onContextMenu={e => e.preventDefault()}
                         onMouseUp={(e) => {
+                            if (hasDragged.current) return;
                             if (e.button === 2) onContextMenu(e, tree.name);
                         }}
                     >
@@ -2683,6 +2824,8 @@ function App() {
     const [newTreeName, setNewTreeName] = useState("");
     const [confirmAction, setConfirmAction] = useState<{ title: string, message: string, action: () => void } | null>(null);
     const [, setIsLangLoading] = useState(false);
+    const hoverDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
     const categories = settings?.categories && settings.categories.length > 0
         ? ["All", ...settings.categories]
         : ["All", "Combat", "Magic", "Stealth", "Special", "Custom"];
@@ -2710,6 +2853,26 @@ function App() {
             shouldScrollOnBack.current = true;
         }
         setSelectedSkill(null);
+    }, []);
+
+    const applyHoveredSkill = useCallback((name: string | null) => {
+        if (hoverDebounceRef.current) clearTimeout(hoverDebounceRef.current);
+        if (name === null) {
+            setHoveredSkillName(null);
+        } else {
+            hoverDebounceRef.current = setTimeout(() => {
+                setHoveredSkillName(prev => {
+                    if (prev === name) return prev;
+                    return name;
+                });
+            }, 300); // Debounce de 2 segundos garantido
+        }
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            if (hoverDebounceRef.current) clearTimeout(hoverDebounceRef.current);
+        };
     }, []);
 
     const loadLanguage = useCallback((lang: string) => {
@@ -2843,15 +3006,26 @@ function App() {
     }, []);
 
     const handleSnapToSkill = useCallback((skillName: string | null) => {
-        setHoveredSkillName(skillName);
-        if (skillName && emblaApi && !isDraggingCarousel.current) {
+        if (skillName === null) {
+            if (emblaApi) {
+                const index = emblaApi.selectedScrollSnap();
+                const tree = filteredTrees[index];
+                if (tree) applyHoveredSkill(tree.name);
+            } else {
+                applyHoveredSkill(null);
+            }
+            return;
+        }
+
+        applyHoveredSkill(skillName);
+        if (emblaApi && !isDraggingCarousel.current) {
             const index = filteredTrees.findIndex(t => t.name === skillName);
             if (index !== -1) {
                 const shouldJump = uiSettings?.performanceMode;
                 emblaApi.scrollTo(index, shouldJump);
             }
         }
-    }, [filteredTrees, emblaApi, uiSettings]);
+    }, [filteredTrees, emblaApi, uiSettings, applyHoveredSkill]);
 
     const wheelTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
     const handleCarouselWheel = useCallback((e: React.WheelEvent) => {
@@ -3092,7 +3266,7 @@ function App() {
             const index = emblaApi.selectedScrollSnap();
             const tree = filteredTrees[index];
             if (tree) {
-                setHoveredSkillName(tree.name);
+                applyHoveredSkill(tree.name);
             }
         };
 
@@ -3102,7 +3276,7 @@ function App() {
         return () => {
             emblaApi.off('select', onSelect);
         };
-    }, [emblaApi, filteredTrees]);
+    }, [emblaApi, filteredTrees, applyHoveredSkill]);
 
     useEffect(() => {
         if (emblaApi && !selectedSkill && shouldScrollOnBack.current && hoveredSkillName) {
@@ -3166,6 +3340,7 @@ function App() {
                             <button className="editor-btn save-btn" onClick={handleSaveTrees}>
                                 {t('editor_toolbar.save_changes')}
                             </button>
+                            
                         </>
                     )}
                 </div>

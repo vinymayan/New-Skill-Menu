@@ -43,8 +43,7 @@ namespace MenuHooks {
         static RE::UI_MESSAGE_RESULTS ProcessMessage_Hook(RE::StatsMenu* a_this, RE::UIMessage& a_message) {
 
             if (a_message.type == RE::UI_MESSAGE_TYPE::kShow) {
-                a_this->menuFlags.set(RE::UI_MENU_FLAGS::kFreezeFrameBackground);
-                a_this->menuFlags.set(RE::UI_MENU_FLAGS::kPausesGame);
+                a_this->menuFlags.set(RE::UI_MENU_FLAGS::kFreezeFramePause);
                 Prisma::Show();
             }
             else if (a_message.type == RE::UI_MESSAGE_TYPE::kHide) {
@@ -117,12 +116,17 @@ bool OnInput(RE::InputEvent* event) {
                 return true; // Bloqueia e consome o input
             }
         }
-
+        
         logger::debug("OnInput: TAB pressionado enquanto o menu Prisma está aberto. Chamando Prisma::Hide()...");
         Prisma::TriggerExitAnimation();
         return true; // Bloqueia o TAB de fazer outras coisas no jogo
     }
-    
+    /*if (button->GetIDCode() == RE::BSWin32KeyboardDevice::Keys::kF3) {
+        auto player = RE::PlayerCharacter::GetSingleton();
+        player->AddSkillExperience(RE::ActorValue::kHeavyArmor, 1000.0f);
+        Manager::GetSingleton()->AddCustomSkillXP("testarone", 1000.0f);
+        return true;
+    }*/
 
     return false;
 }
