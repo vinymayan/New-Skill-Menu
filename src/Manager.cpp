@@ -1,4 +1,4 @@
-#include "Manager.h"
+﻿#include "Manager.h"
 
 void Manager::PopulateAllLists() {
     if (_isPopulated) return;
@@ -14,6 +14,22 @@ void Manager::PopulateAllLists() {
         if ((perk->formFlags & RE::BGSPerk::RecordFlags::kNonPlayable) != 0) return false;
         if (!perk->data.playable) return false;
         return true;
+        });
+
+    PopulateList<RE::TESQuest>("Quest", [](RE::TESQuest* quest) -> bool {
+        return quest != nullptr;
+        });
+
+    PopulateList<RE::SpellItem>("Spell", [](RE::SpellItem* spell) -> bool {
+        return spell != nullptr;
+        });
+
+    PopulateList<RE::BGSLocation>("Location", [](RE::BGSLocation* loc) -> bool {
+        return loc != nullptr && loc->worldLocMarker;
+        });
+
+    PopulateList<RE::TESFaction>("Faction", [](RE::TESFaction* faction) -> bool {
+        return faction != nullptr;
         });
 
     /*PopulateList<RE::TESFaction>("Faction");*/

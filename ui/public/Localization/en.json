@@ -1,5 +1,10 @@
-{
+﻿{
   "common": {
+    "all": "All",
+    "lvl": "Lvl",
+    "qty": "Qty",
+    "or": "OR",
+    "and": "AND",
     "cancel": "CANCEL",
     "save": "SAVE",
     "confirm": "CONFIRM",
@@ -23,7 +28,10 @@
     "default": "Default",
     "base": "Base",
     "no_items_found": "No items found.",
-    "select_magic_school": "Select School..."
+    "select_magic_school": "Select School...",
+    "search_short": "Search...",
+    "has": "HAS",
+    "not": "NOT"
   },
   "header": {
     "name": "NAME",
@@ -61,6 +69,9 @@
       "codes": "CODES"
     },
     "base": {
+      "use_dynamic_cap": "Use Dynamic Skill Cap",
+      "cap_level_mult": "Cap/Level Mult:",
+      "apply_racial_bonus_to_cap": "Apply Racial Bonus to Cap",
       "perks_per_level": "Perks per Level:",
       "skill_cap": "Skill Cap (Max Level):",
       "enable_legendary": "Enable Legendary?",
@@ -68,19 +79,29 @@
       "use_base_skill_level": "Use Base Skill Level for Reqs (Ignore Buffs)?",
       "skill_points_per_level": "Skill Points/Level:",
       "max_spendable": "Max Skill Points Spendable/Level:",
-      "reset_all_btn": "⚠ RESET ALL PERKS (REFUND POINTS)"
+      "reset_all_btn": "⚠ RESET ALL PERKS (REFUND POINTS)",
+      "apply_vanilla_initial": "Skill tree base level in New Game?(Disable if you use Race Overhauls)",
+      "carry_weight_title": "CARRY WEIGHT SETTINGS",
+      "cw_method": "How to gain Carry Weight?",
+      "cw_method_none": "Do not gain",
+      "cw_method_auto": "Automatic (Regardless of Attribute)",
+      "cw_method_linked": "Linked to Chosen Attribute",
+      "cw_increase": "Carry Weight Increase per Level:",
+      "cw_linked_title": "Attributes that grant Carry Weight:"
     },
     "rules": {
       "desc": "Rules saved in rules.json. Overrides base settings when level is reached.",
       "level_label": "LEVEL:",
       "add_rule": "+ ADD RULE",
+      "use_dynamic_cap": "Use Dynamic Cap for this Rule",
       "skill_cap": "Skill Cap:",
       "skill_points": "Skill Points:",
       "max_spend": "Max Spend:",
       "perks_bonus": "Perks (+):",
       "health_bonus": "Health (+):",
       "magicka_bonus": "Magicka (+):",
-      "stamina_bonus": "Stamina (+):"
+      "stamina_bonus": "Stamina (+):",
+      "cw_bonus": "Carry W. (+):"
     },
     "categories": {
       "desc": "Manage Skill Tree categories.",
@@ -90,6 +111,7 @@
     "codes": {
       "desc": "Create redeemable codes. Set rewards or mark as 'Editor Code' to unlock layout.",
       "code_placeholder": "ENTER CODE",
+      "default_code": "NEW",
       "max_uses": "Max Uses (-1 for infinite):",
       "is_editor": "Is Editor Code?",
       "rewards_title": "REWARDS (Leave empty if none)",
@@ -108,8 +130,11 @@
     "initial_level": "Initial Level:",
     "advances_player": "Advances Player Level?",
     "bg_path": "Background Path:",
+    "bg_placeholder": "Ex: ./bg/mage.webp",
     "icon_path": "Icon Path (Skill):",
+    "icon_placeholder": "Ex: ./icons/mage.svg",
     "default_perk_icon": "Default Perk Icon Path:",
+    "perk_icon_placeholder": "Ex: ./Assets/Skrymbols.png",
     "exp_formula": "Experience Formula",
     "requirements_title": "Tree Unlock Requirements",
     "new_req_btn": "+ NEW REQUIREMENT",
@@ -120,7 +145,9 @@
     "use_offset": "Use Offset:",
     "improve_mult": "Improve Mult:",
     "improve_offset": "Improve Offset:",
-    "save_before_export": "Save changes before exporting"
+    "save_before_export": "Save changes before exporting",
+    "is_hidden": "Hide this Tree from UI?",
+    "delete_tree": "DELETE TREE"
   },
   "perk_editor": {
     "edit_title": "EDIT PERK",
@@ -138,7 +165,7 @@
     "add_manual_rank": "+ ADD RANK MANUALLY",
     "save_perk": "SAVE PERK",
     "add_first_perk": "+ ADD INITIAL PERK",
-    "connecting_overlay": "Select target... (Right Click to cancel)",
+    "connecting_overlay": "Select a perk to connect, or click a connected perk to disconnect. (Right click to cancel)",
     "alert_select_native": "Please select a native Skill/Perk first!",
     "new_manual_rank_name": "New Manual Rank",
     "move_tree_hint": "Shift + Drag background to move the whole tree",
@@ -164,7 +191,8 @@
     "allocate": "ALLOCATE SKILLS ({points} LEFT)",
     "choose_attr": "CHOOSE ATTRIBUTE",
     "confirm_btn": "CONFIRM LEVEL UP",
-    "cap_reached": "Skill Cap Reached"
+    "cap_reached": "Skill Cap Reached",
+    "cw_bonus_tooltip": "+{amount} Carry Weight"
   },
   "unlock_perk": {
     "title": "UNLOCK PERK",
@@ -198,13 +226,19 @@
     "spells_known": "Know {val} Spells ({target})",
     "kills": "{val} Total Kills",
     "perk": "Has Perk: {val}",
+    "quest_completed": "Quest Completed: {val}",
+    "location_discovered": "Location Discovered: {val}",
+    "location_cleared": "Location Cleared: {val}",
+    "faction": "In Faction: {val}",
+    "spell": "Has Spell: {val}",
     "item": "Has Item: {val}",
     "global": "Global: {val}",
     "locked_tree_title": "REQUIRED TO UNLOCK",
     "boolean_base_value": "Y/N Base Value",
     "requirements_label": "Requirements:",
     "logic_or_title": "Logic: OR (Matches if this OR next is true)",
-    "logic_and_title": "Logic: AND (Must match)"
+    "logic_and_title": "Logic: AND (Must match)",
+    "must_not_have": "Must NOT Have"
   },
   "editor_toolbar": {
     "mode_btn": "EDITOR MODE",
@@ -216,5 +250,9 @@
   "code_input": {
     "placeholder": "ENTER CODE",
     "redeem_btn": "REDEEM"
+  },
+  "delete_tree": {
+    "title": "DELETE TREE",
+    "confirm_message": "Are you sure you want to delete the tree '{treeName}'? The .json file will be permanently deleted from the disk."
   }
 }

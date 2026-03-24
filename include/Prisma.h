@@ -1,6 +1,5 @@
 #pragma once
 #include "PrismaUI_API.h"
-#include <nlohmann/json.hpp> 
 #include <miniz.h>
 
 class Prisma {
@@ -15,5 +14,8 @@ public:
     static void TriggerExitAnimation();
     static void Hide();
     static bool IsHidden();
+    static void SetLevelUpMenuOpen(bool isOpen);
+    static bool IsLevelUpMenuOpen();
+    static void TriggerBack();
 };
 

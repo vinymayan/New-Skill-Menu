@@ -13,6 +13,7 @@ interface Requirement {
     target?: string;
     isMet?: boolean;
     isOr?: boolean; 
+    isNot?: boolean;
 }
 interface UISettings {
     language: Language;
@@ -67,6 +68,7 @@ interface SkillTreeData {
     currentLevel: number;
     currentProgress: number;
     cap?: number;
+    isHidden?: boolean;
 }
 interface PlayerData {
     name: string;
@@ -80,6 +82,7 @@ interface PlayerData {
     race?: string;
     dragonSouls?: number;
     pendingLevelUp?: boolean;
+    isLevelUpMenuOpen?: boolean;
 }
 interface LevelRule {
     level: number;
@@ -90,6 +93,8 @@ interface LevelRule {
     skillPointsPerLevel?: number;
     maxSkillPointsSpendablePerLevel?: number;
     skillCap?: number;
+    useDynamicSkillCap?: boolean;
+    carryWeightIncrease?: number;
 }
 interface Reward {
     perkPoints?: number;
@@ -104,7 +109,11 @@ interface CodeData {
     rewards: Reward;
     isEditorCode?: boolean;
 }
-interface RequirementDef { id: string; name: string; }
+interface RequirementDef {
+    id: string;
+    name: string;
+    isForm?: boolean;
+}
 interface SettingsData {
     base: {
         perksPerLevel: number;
@@ -117,10 +126,124 @@ interface SettingsData {
         refillAttributesOnLevelUp?: boolean;
         useBaseSkillLevel?: boolean;
         skillCap?: number;
+        useDynamicSkillCap?: boolean;
+        skillCapPerLevelMult?: number;
+        applyRacialBonusToCap?: boolean;
+        applyVanillaInitialLevels?: boolean;
+        carryWeightIncrease?: number;
+        carryWeightMethod?: 'none' | 'auto' | 'linked';
+        carryWeightLinkedAttributes?: string[];
     };
     categories: string[];
     codes: CodeData[];
 }
+
+// === DROPDOWN CUSTOMIZADO ===
+const CustomSelect = ({
+    options,
+    value,
+    onChange,
+    placeholder = t('common.search_short'),
+    width = "auto",
+    disableSearch = false // Mantido na assinatura para evitar erros de tipagem, mas o efeito foi removido
+}: {
+    options: { value: string | number, label: string }[],
+    value: string | number,
+    onChange: (val: any) => void,
+    placeholder?: string,
+    width?: string,
+    disableSearch?: boolean
+}) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [searchTerm, setSearchTerm] = useState("");
+    const dropdownRef = useRef<HTMLDivElement>(null);
+
+    // Fecha o dropdown se clicar fora dele
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        if (isOpen) {
+            document.addEventListener('mousedown', handleClickOutside);
+        }
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [isOpen]);
+
+    const selectedOption = options.find(opt => String(opt.value) === String(value));
+    const displayLabel = selectedOption ? selectedOption.label : value;
+
+    const filteredOptions = options.filter(opt =>
+        opt.label.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    return (
+        <div ref={dropdownRef} className="skyrim-select-container" style={{ width: width, position: 'relative' }}>
+            <button
+                type="button"
+                className="skyrim-dropdown form-selector-trigger-btn"
+                style={{ width: '100%', textAlign: 'left', padding: '5px', margin: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                onClick={(e) => {
+                    e.preventDefault();
+                    setIsOpen(!isOpen);
+                    if (!isOpen) setSearchTerm(""); // Limpa a busca ao abrir
+                }}
+            >
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayLabel}</span>
+                <span style={{ fontSize: '0.8rem', marginLeft: '5px', opacity: 0.7 }}>▼</span>
+            </button>
+
+            {isOpen && (
+                <div style={{
+                    position: "absolute", top: "100%", left: 0, width: "100%", minWidth: "150px",
+                    background: "rgba(0,0,0,0.95)", border: "1px solid #777",
+                    zIndex: 9999, maxHeight: "200px", overflowY: "auto",
+                    display: "flex", flexDirection: "column", padding: "5px",
+                    boxShadow: "0 4px 6px rgba(0,0,0,0.5)"
+                }}>
+                    {/* O input de pesquisa agora aparece sempre, sem checar options.length ou disableSearch */}
+                    <input
+                        type="text"
+                        className="skyrim-search-input"
+                        placeholder={placeholder}
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        autoFocus
+                        style={{ marginBottom: "8px", width: "100%", padding: "5px", fontSize: '0.9rem' }}
+                    />
+
+                    {filteredOptions.length > 0 ? (
+                        filteredOptions.map((opt, i) => (
+                            <button
+                                key={i}
+                                className="sl-action-btn"
+                                style={{
+                                    textAlign: "left", padding: "8px", margin: "2px 0", border: "none",
+                                    background: String(opt.value) === String(value) ? 'rgba(255, 255, 255, 0.2)' : 'transparent',
+                                    color: String(opt.value) === String(value) ? '#ff9800' : 'white'
+                                }}
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onChange(opt.value);
+                                    setIsOpen(false);
+                                }}
+                            >
+                                {opt.label}
+                            </button>
+                        ))
+                    ) : (
+                        <div style={{ padding: "8px", color: "#777", textAlign: "center" }}>{t('common.no_items_found')}</div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
 
 const useCustomImage = (url: string) => {
     const [image, setImage] = useState<HTMLImageElement | undefined>(undefined);
@@ -241,8 +364,9 @@ function getEffectiveSettings(settings: SettingsData, rules: LevelRule[], target
             if (rule.magickaIncrease !== undefined) eff.magickaIncrease = rule.magickaIncrease;
             if (rule.skillPointsPerLevel !== undefined) eff.skillPointsPerLevel = rule.skillPointsPerLevel;
             if (rule.maxSkillPointsSpendablePerLevel !== undefined) eff.maxSkillPointsSpendablePerLevel = rule.maxSkillPointsSpendablePerLevel;
-
             if (rule.skillCap !== undefined) eff.skillCap = rule.skillCap;
+            if (rule.carryWeightIncrease !== undefined) eff.carryWeightIncrease = rule.carryWeightIncrease;
+            if (rule.useDynamicSkillCap !== undefined) eff.useDynamicSkillCap = rule.useDynamicSkillCap;
         }
     }
 
@@ -350,15 +474,32 @@ const MiniBarFrameSVG = () => (
 );
 
 const RequirementInputRow = ({
-    req, availableReqs, availableTrees, availablePerks, onUpdate, onRemove, onSelectPerk
+    req, availableReqs, availableTrees, formLists, onUpdate, onRemove, onSelectTarget
 }: {
-    req: Requirement, availableReqs: RequirementDef[], availableTrees: string[], availablePerks: AvailablePerk[],
-    onUpdate: (field: string, val: any) => void, onRemove: () => void, onSelectPerk: () => void
+    req: Requirement, availableReqs: RequirementDef[], availableTrees: string[], formLists: Record<string, AvailablePerk[]>,
+    onUpdate: (field: string, val: any) => void, onRemove: () => void, onSelectTarget: (type: string) => void
 }) => {
-    const selectedPerk = req.type === 'perk' && req.value ? availablePerks.find(p => p.id === req.value) : null;
-    const displayPerkText = selectedPerk
-        ? `${selectedPerk.name} | ${selectedPerk.id}`
+    const reqDef = availableReqs.find(r => r.id === req.type);
+    const isForm = reqDef?.isForm === true;
+
+    // Pega a lista correspondente de forma dinâmica e o item selecionado
+    const selectedList = formLists[req.type];
+    const selectedItem = isForm && selectedList ? selectedList.find(i => i.id === req.value) : null;
+
+    const displayTargetText = selectedItem
+        ? `${selectedItem.name} | ${selectedItem.id}`
         : (req.value ? req.value : t('common.select'));
+
+    const reqTypeOptions = availableReqs.map(r => ({ value: r.id, label: r.name }));
+    const treeOptions = [{ value: "", label: t('common.select') }, ...availableTrees.map(t => ({ value: t, label: t }))];
+    const magicSchoolOptions = [
+        { value: "", label: t('common.select_magic_school') },
+        { value: "Alteration", label: t('magic_schools.alteration') },
+        { value: "Conjuration", label: t('magic_schools.conjuration') },
+        { value: "Destruction", label: t('magic_schools.destruction') },
+        { value: "Illusion", label: t('magic_schools.illusion') },
+        { value: "Restoration", label: t('magic_schools.restoration') }
+    ];
 
     return (
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '5px' }}>
@@ -375,44 +516,62 @@ const RequirementInputRow = ({
                     border: req.isOr ? '1px solid #ff9800' : '1px solid #555'
                 }}
                 onClick={() => onUpdate('isOr', !req.isOr)}
-                title={req.isOr ? "Logic: OR (Matches if this OR next is true)" : "Logic: AND (Must match)"}
+                title={req.isOr ? t('reqs.logic_or_title') : t('reqs.logic_and_title')}
             >
-                {req.isOr ? "OR" : "AND"}
+                {req.isOr ? t('common.or') : t('common.and')}
             </button>
+            <button
+                className="modal-btn"
+                style={{
+                    width: '50px',
+                    padding: '5px',
+                    fontSize: '0.8rem',
+                    background: req.isNot ? '#f44336' : 'rgba(255,255,255,0.1)',
+                    color: 'white',
+                    border: req.isNot ? '1px solid #f44336' : '1px solid #555'
+                }}
+                onClick={() => onUpdate('isNot', !req.isNot)}
+                title={t('reqs.must_not_have')}
+            >
+                {req.isNot ? t('common.not') : t('common.has')}
+            </button>
+            <CustomSelect
+                options={reqTypeOptions}
+                value={req.type}
+                onChange={(val) => onUpdate('type', val)}
+                width="180px"
+                disableSearch={true}
+            />
 
-            <select value={req.type} onChange={e => {
-                onUpdate('type', e.target.value);
-            }} className="skyrim-select" style={{ width: 'auto' }}>
-                {availableReqs.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </select>
-
-            {req.type === 'perk' && (
-                <button className="form-selector-trigger-btn" style={{ width: 'auto', padding: '5px', margin: 0, fontSize: '0.9rem' }} onClick={onSelectPerk}>
-                    {displayPerkText}
+            {isForm && (
+                <button className="form-selector-trigger-btn" style={{ width: 'auto', padding: '5px', margin: 0, fontSize: '0.9rem' }} onClick={() => onSelectTarget(req.type)}>
+                    {displayTargetText}
                 </button>
             )}
 
             {req.type === 'any_skill' && (
                 <>
-                    <select value={req.target || ''} onChange={e => onUpdate('target', e.target.value)} className="skyrim-select" style={{ width: '130px' }}>
-                        <option value="">{t('common.select')}</option>
-                        {availableTrees.map(t => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                    <input type="number" placeholder="Lvl" value={req.value || ''} onChange={e => onUpdate('value', Number(e.target.value))} style={{ width: '60px', background: 'rgba(0,0,0,0.5)', color: 'white', padding: '5px' }} />
+                    <CustomSelect
+                        options={treeOptions}
+                        value={req.target || ''}
+                        onChange={(val) => onUpdate('target', val)}
+                        width="150px"
+                        placeholder={t('common.select')}
+                    />
+                    <input type="number" placeholder={t('common.lvl')} value={req.value || ''} onChange={e => onUpdate('value', Number(e.target.value))} style={{ width: '60px', background: 'rgba(0,0,0,0.5)', color: 'white', padding: '5px' }} />
                 </>
             )}
 
             {req.type === 'spells_known' && (
                 <>
-                    <select value={req.target || ''} onChange={e => onUpdate('target', e.target.value)} className="skyrim-select" style={{ width: '130px' }}>
-                        <option value="">{t('common.select_magic_school')}</option>
-                        <option value="Alteration">{t('magic_schools.alteration')}</option>
-                        <option value="Conjuration">{t('magic_schools.conjuration')}</option>
-                        <option value="Destruction">{t('magic_schools.destruction')}</option>
-                        <option value="Illusion">{t('magic_schools.illusion')}</option>
-                        <option value="Restoration">{t('magic_schools.restoration')}</option>
-                    </select>
-                    <input type="number" placeholder="Qtd" value={req.value || ''} onChange={e => onUpdate('value', Number(e.target.value))} style={{ width: '60px', background: 'rgba(0,0,0,0.5)', color: 'white', padding: '5px' }} />
+                    <CustomSelect
+                        options={magicSchoolOptions}
+                        value={req.target || ''}
+                        onChange={(val) => onUpdate('target', val)}
+                        width="150px"
+                        disableSearch={true}
+                    />
+                    <input type="number" placeholder={t('common.qty')} value={req.value || ''} onChange={e => onUpdate('value', Number(e.target.value))} style={{ width: '60px', background: 'rgba(0,0,0,0.5)', color: 'white', padding: '5px' }} />
                 </>
             )}
 
@@ -424,7 +583,7 @@ const RequirementInputRow = ({
                 <input type="number" placeholder={t('common.value')} value={req.value || ''} onChange={e => onUpdate('value', Number(e.target.value))} style={{ width: '100px', background: 'rgba(0,0,0,0.5)', color: 'white', padding: '5px' }} />
             )}
 
-            {(!['perk', 'any_skill', 'spells_known', 'is_vampire', 'is_werewolf', 'level', 'player_level', 'kills'].includes(req.type)) && (
+            {(!isForm && !['any_skill', 'spells_known', 'is_vampire', 'is_werewolf', 'level', 'player_level', 'kills'].includes(req.type)) && (
                 <input type="text" placeholder={t('common.id_value')} value={req.value || ''} onChange={e => onUpdate('value', e.target.value)} style={{ width: '100px', background: 'rgba(0,0,0,0.5)', color: 'white', padding: '5px' }} />
             )}
 
@@ -446,7 +605,12 @@ const FormSelectorModal = ({ items, onClose, onSelect }: { items: AvailablePerk[
     }, [items, search]);
 
     return (
-        <div className="skyrim-modal-overlay" style={{ zIndex: 4000 }}>
+        <div className="skyrim-modal-overlay"
+            style={{ zIndex: 4000 }}
+            onClick={(e) => {
+                if (e.target === e.currentTarget) onClose();
+            }}
+        >
             <div className="skyrim-modal-content form-selector-modal">
                 <h2>{t('common.click_select')}</h2>
                 <div className="tooltip-divider" style={{ width: '100%', marginBottom: '15px' }}></div>
@@ -498,12 +662,12 @@ const FormSelectorModal = ({ items, onClose, onSelect }: { items: AvailablePerk[
     );
 };
 
-const TreeEditorModal = ({ tree, settings, availableReqs, availableTrees, availablePerks, onClose, onSave, onRequestBrowse }: {
-    tree: SkillTreeData, settings: SettingsData, availableReqs: RequirementDef[], availableTrees: string[], availablePerks: AvailablePerk[], onClose: () => void,
+const TreeEditorModal = ({ tree, settings, availableReqs, availableTrees, formLists, onClose, onSave, onRequestBrowse }: {
+    tree: SkillTreeData, settings: SettingsData, availableReqs: RequirementDef[], availableTrees: string[], formLists: Record<string, AvailablePerk[]>, onClose: () => void,
     onSave: (t: SkillTreeData) => void, onRequestBrowse: (field: string) => void
 }) => {
     const [formData, setFormData] = useState<SkillTreeData>(tree);
-    const [selectingReqTarget, setSelectingReqTarget] = useState<number | null>(null);
+    const [selectingReqTarget, setSelectingReqTarget] = useState<{ idx: number, type: string } | null>(null);
     const [displayColorPicker, setDisplayColorPicker] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
 
@@ -572,9 +736,13 @@ const TreeEditorModal = ({ tree, settings, availableReqs, availableTrees, availa
                     </label>
 
                     <label>{t('tree_editor.category')}
-                        <select name="category" value={formData.category} onChange={handleChange} className="skyrim-select">
-                            {settings.categories?.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                        </select>
+                        <CustomSelect
+                            options={settings.categories?.map(cat => ({ value: cat, label: cat })) || []}
+                            value={formData.category}
+                            onChange={(val) => setFormData(prev => ({ ...prev, category: val }))}
+                            width="100%"
+                            disableSearch={true}
+                        />
                     </label>
                     <label>{t('tree_editor.base_color')}
                         <div className="form-row" style={{ position: 'relative' }}>
@@ -622,22 +790,25 @@ const TreeEditorModal = ({ tree, settings, availableReqs, availableTrees, availa
                             {t('tree_editor.advances_player')}
                         </label>
                     )}
-
+                    <label className="checkbox-label" style={{ marginTop: '30px' }}>
+                        <input type="checkbox" name="isHidden" checked={formData.isHidden || false} onChange={handleChange} />
+                        <span style={{ color: '#ff9800' }}>{t('tree_editor.is_hidden')}</span>
+                    </label>
                     <label className="full-width">{t('tree_editor.bg_path')}
                         <div className="form-row">
-                            <input type="text" name="bgPath" value={formData.bgPath} onChange={handleChange} placeholder="Ex: ./bg/mage.webp" style={{ flex: 1 }} />
+                            <input type="text" name="bgPath" value={formData.bgPath} onChange={handleChange} placeholder={t('tree_editor.bg_placeholder')} style={{ flex: 1 }} />
                             <button className="browse-btn" onClick={() => onRequestBrowse('bgPath')}>{t('common.browse')}</button>
                         </div>
                     </label>
                     <label className="full-width">{t('tree_editor.icon_path')}
                         <div className="form-row">
-                            <input type="text" name="iconPath" value={formData.iconPath} onChange={handleChange} placeholder="Ex: ./icons/mage.svg" style={{ flex: 1 }} />
+                            <input type="text" name="iconPath" value={formData.iconPath} onChange={handleChange} placeholder={t('tree_editor.bg_placeholder')} style={{ flex: 1 }} />
                             <button className="browse-btn" onClick={() => onRequestBrowse('iconPath')}>{t('common.browse')}</button>
                         </div>
                     </label>
                     <label className="full-width">{t('tree_editor.default_perk_icon')}
                         <div className="form-row">
-                            <input type="text" name="iconPerkPath" value={formData.iconPerkPath || ""} onChange={handleChange} placeholder="Ex: ./Assets/Skrymbols.png" style={{ flex: 1 }} />
+                            <input type="text" name="iconPerkPath" value={formData.iconPerkPath || ""} onChange={handleChange} placeholder={t('tree_editor.bg_placeholder')} style={{ flex: 1 }} />
                             <button className="browse-btn" onClick={() => onRequestBrowse('iconPerkPath')}>{t('common.browse')}</button>
                         </div>
                     </label>
@@ -663,7 +834,7 @@ const TreeEditorModal = ({ tree, settings, availableReqs, availableTrees, availa
                             req={req}
                             availableReqs={availableReqs}
                             availableTrees={availableTrees}
-                            availablePerks={availablePerks}
+                            formLists={formLists}
                             onUpdate={(field, val) => {
                                 setFormData(prev => {
                                     const newReqs = [...(prev.treeRequirements || [])];
@@ -676,7 +847,7 @@ const TreeEditorModal = ({ tree, settings, availableReqs, availableTrees, availa
                                 });
                             }}
                             onRemove={() => setFormData({ ...formData, treeRequirements: (formData.treeRequirements || []).filter((_, i) => i !== idx) })}
-                            onSelectPerk={() => setSelectingReqTarget(idx)}
+                            onSelectTarget={(type) => setSelectingReqTarget({ idx, type })}
                         />
                     ))}
                     <button className="add-btn" onClick={() => {
@@ -703,17 +874,29 @@ const TreeEditorModal = ({ tree, settings, availableReqs, availableTrees, availa
                         </button>
                     )}
 
+                    {!formData.isVanilla && formData.name && (
+                        <button className="modal-btn danger-btn" onClick={() => {
+                            window.dispatchEvent(new CustomEvent('requestDeleteTree', { detail: { name: formData.name } }));
+                        }}>
+                            🗑️ {t('tree_editor.delete_tree')}
+                        </button>
+                    )}
+
                     <button className="modal-btn no-btn" onClick={onClose}>{t('common.cancel')}</button>
                 </div>
             </div>
 
-            {selectingReqTarget !== null && (
-                <FormSelectorModal items={availablePerks} onClose={() => setSelectingReqTarget(null)} onSelect={(id) => {
-                    const newReqs = [...(formData.treeRequirements || [])];
-                    newReqs[selectingReqTarget] = { ...newReqs[selectingReqTarget], value: id };
-                    setFormData({ ...formData, treeRequirements: newReqs });
-                    setSelectingReqTarget(null);
-                }} />
+            {selectingReqTarget !== null && formLists[selectingReqTarget.type] && (
+                <FormSelectorModal
+                    items={formLists[selectingReqTarget.type]}
+                    onClose={() => setSelectingReqTarget(null)}
+                    onSelect={(id) => {
+                        const newReqs = [...(formData.treeRequirements || [])];
+                        newReqs[selectingReqTarget.idx] = { ...newReqs[selectingReqTarget.idx], value: id };
+                        setFormData({ ...formData, treeRequirements: newReqs });
+                        setSelectingReqTarget(null);
+                    }}
+                />
             )}
         </div>
     );
@@ -1236,16 +1419,22 @@ const SettingsModal = ({ settings, rules, onClose, onSaveSettings, onSaveRules, 
 
     const addRule = () => setRulesData(prev => [...prev, { level: 2 }]);
     const removeRule = (index: number) => setRulesData(prev => prev.filter((_, i) => i !== index));
-    const handleRuleChange = (index: number, field: keyof LevelRule, value: string) => {
+    const handleRuleChange = (index: number, field: keyof LevelRule, value: any) => {
         setRulesData(prev => {
             const newRules = [...prev];
-            if (value === "") delete newRules[index][field];
-            else newRules[index][field] = Number(value) as any;
+            if (value === "" || value === null) {
+                delete newRules[index][field];
+            } else {
+                newRules[index] = {
+                    ...newRules[index],
+                    [field]: (typeof value === 'boolean') ? value : Number(value)
+                };
+            }
             return newRules;
         });
     };
 
-    const addCode = () => setSettingsData(prev => ({ ...prev, codes: [...(prev.codes || []), { code: "NOVO", maxUses: 1, currentUses: 0, rewards: {} }] }));
+    const addCode = () => setSettingsData(prev => ({ ...prev, codes: [...(prev.codes || []), { code: t('settings.codes.default_code'), maxUses: 1, currentUses: 0, rewards: {} }] }));
     const removeCode = (idx: number) => setSettingsData(prev => ({ ...prev, codes: prev.codes.filter((_, i) => i !== idx) }));
     const handleCodeChange = (index: number, field: keyof CodeData, value: any) => {
         setSettingsData(prev => {
@@ -1286,6 +1475,30 @@ const SettingsModal = ({ settings, rules, onClose, onSaveSettings, onSaveRules, 
                             <label className="checkbox-label" style={{ marginTop: '10px' }}>
                                 <input
                                     type="checkbox"
+                                    name="useDynamicSkillCap"
+                                    checked={settingsData.base.useDynamicSkillCap !== false}
+                                    onChange={handleBaseChange}
+                                />
+                                {t('settings.base.use_dynamic_cap')}
+                            </label>
+
+                            {settingsData.base.useDynamicSkillCap !== false && (
+                                <div className="settings-grid compact-grid" style={{ gridColumn: 'span 2', marginLeft: '10px', paddingLeft: '10px', borderLeft: '2px solid rgba(255,255,255,0.1)', marginTop: '5px', marginBottom: '15px' }}>
+                                    <label>{t('settings.base.cap_level_mult')} <input type="number" step="0.1" name="skillCapPerLevelMult" value={settingsData.base.skillCapPerLevelMult ?? 2.0} onChange={handleBaseChange} /></label>
+                                    <label className="checkbox-label" style={{ gridColumn: 'span 2' }}>
+                                        <input
+                                            type="checkbox"
+                                            name="applyRacialBonusToCap"
+                                            checked={settingsData.base.applyRacialBonusToCap !== false}
+                                            onChange={handleBaseChange}
+                                        />
+                                        {t('settings.base.apply_racial_bonus_to_cap')}
+                                    </label>
+                                </div>
+                            )}
+                            <label className="checkbox-label" style={{ marginTop: '10px' }}>
+                                <input
+                                    type="checkbox"
                                     name="enableLegendary"
                                     checked={settingsData.base.enableLegendary !== false}
                                     onChange={handleBaseChange}
@@ -1310,17 +1523,62 @@ const SettingsModal = ({ settings, rules, onClose, onSaveSettings, onSaveRules, 
                                 />
                                 {t('settings.base.use_base_skill_level')}
                             </label>
+                            <label className="checkbox-label" style={{ marginTop: '10px' }}>
+                                <input
+                                    type="checkbox"
+                                    name="applyVanillaInitialLevels"
+                                    checked={settingsData.base.applyVanillaInitialLevels !== false}
+                                    onChange={handleBaseChange}
+                                />
+                                {t('settings.base.apply_vanilla_initial')}
+                            </label>
                             <label>{t('settings.base.skill_points_per_level')} <input type="number" name="skillPointsPerLevel" value={settingsData.base.skillPointsPerLevel} onChange={handleBaseChange} /></label>
                             <label>{t('settings.base.max_spendable')} <input type="number" name="maxSkillPointsSpendablePerLevel" value={settingsData.base.maxSkillPointsSpendablePerLevel} onChange={handleBaseChange} /></label>
                             <label>{t('header.health')} (+): <input type="number" name="healthIncrease" value={settingsData.base.healthIncrease} onChange={handleBaseChange} /></label>
                             <label>{t('header.magicka')} (+): <input type="number" name="magickaIncrease" value={settingsData.base.magickaIncrease} onChange={handleBaseChange} /></label>
                             <label>{t('header.stamina')} (+): <input type="number" name="staminaIncrease" value={settingsData.base.staminaIncrease} onChange={handleBaseChange} /></label>
+                            <div style={{ gridColumn: 'span 2', marginTop: '15px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '15px' }}>
+                                <h3 style={{ margin: '0 0 10px 0', fontSize: '1.1rem', color: '#4dd0e1' }}>{t('settings.base.carry_weight_title')}</h3>
+                                <div className="settings-grid">
+                                    <label>{t('settings.base.cw_method')}
+                                        <CustomSelect
+                                            options={[
+                                                { value: 'none', label: t('settings.base.cw_method_none') },
+                                                { value: 'auto', label: t('settings.base.cw_method_auto') },
+                                                { value: 'linked', label: t('settings.base.cw_method_linked') }
+                                            ]}
+                                            value={settingsData.base.carryWeightMethod || 'none'}
+                                            onChange={(val) => setSettingsData(prev => ({ ...prev, base: { ...prev.base, carryWeightMethod: val } }))}
+                                            width="100%"
+                                            disableSearch={true}
+                                        />
+                                    </label>
+                                    <label>{t('settings.base.cw_increase')} <input type="number" name="carryWeightIncrease" value={settingsData.base.carryWeightIncrease || 0} onChange={handleBaseChange} /></label>
+
+                                    {settingsData.base.carryWeightMethod === 'linked' && (
+                                        <div style={{ gridColumn: 'span 2', display: 'flex', gap: '15px', alignItems: 'center' }}>
+                                            <span style={{ color: '#ccc' }}>{t('settings.base.cw_linked_title')}</span>
+                                            {['Health', 'Magicka', 'Stamina'].map(attr => (
+                                                <label key={attr} className="checkbox-label" style={{ margin: 0 }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={(settingsData.base.carryWeightLinkedAttributes || []).includes(attr)}
+                                                        onChange={(e) => {
+                                                            const current = settingsData.base.carryWeightLinkedAttributes || [];
+                                                            const next = e.target.checked ? [...current, attr] : current.filter(a => a !== attr);
+                                                            setSettingsData(prev => ({ ...prev, base: { ...prev.base, carryWeightLinkedAttributes: next } }));
+                                                        }}
+                                                    />
+                                                    {t(`header.${attr.toLowerCase()}`)}
+                                                </label>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
                             <div style={{ gridColumn: 'span 2', marginTop: '20px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '20px' }}>
-                                <button
-                                    className="modal-btn danger-btn"
-                                    style={{ width: '100%' }}
-                                    onClick={onResetAllPerks}
-                                >
+                                <button className="modal-btn danger-btn" style={{ width: '100%' }} onClick={onResetAllPerks}>
                                     {t('settings.base.reset_all_btn')}
                                 </button>
                             </div>
@@ -1338,12 +1596,17 @@ const SettingsModal = ({ settings, rules, onClose, onSaveSettings, onSaveRules, 
                                     </div>
                                     <div className="settings-grid compact-grid">
                                         <label>{t('settings.rules.skill_cap')} <input type="number" placeholder={t('common.base')} value={rule.skillCap ?? ''} onChange={e => handleRuleChange(idx, 'skillCap', e.target.value)} style={{ borderColor: '#ffd700' }} /></label>
+                                        <label className="checkbox-label" style={{ gridColumn: 'span 2', marginTop: '10px' }}>
+                                            <input type="checkbox" checked={rule.useDynamicSkillCap !== false} onChange={e => handleRuleChange(idx, 'useDynamicSkillCap', e.target.checked)} />
+                                            {t('settings.rules.use_dynamic_cap')}
+                                        </label>
                                         <label>{t('settings.rules.skill_points')} <input type="number" placeholder={t('common.base')} value={rule.skillPointsPerLevel ?? ''} onChange={e => handleRuleChange(idx, 'skillPointsPerLevel', e.target.value)} /></label>
                                         <label>{t('settings.rules.max_spend')} <input type="number" placeholder={t('common.base')} value={rule.maxSkillPointsSpendablePerLevel ?? ''} onChange={e => handleRuleChange(idx, 'maxSkillPointsSpendablePerLevel', e.target.value)} /></label>
                                         <label>{t('settings.rules.perks_bonus')} <input type="number" placeholder={t('common.base')} value={rule.perksPerLevel ?? ''} onChange={e => handleRuleChange(idx, 'perksPerLevel', e.target.value)} /></label>
                                         <label>{t('settings.rules.health_bonus')} <input type="number" placeholder={t('common.base')} value={rule.healthIncrease ?? ''} onChange={e => handleRuleChange(idx, 'healthIncrease', e.target.value)} /></label>
                                         <label>{t('settings.rules.magicka_bonus')} <input type="number" placeholder={t('common.default')} value={rule.magickaIncrease ?? ''} onChange={e => handleRuleChange(idx, 'magickaIncrease', e.target.value)} /></label>
                                         <label>{t('settings.rules.stamina_bonus')} <input type="number" placeholder={t('common.default')} value={rule.staminaIncrease ?? ''} onChange={e => handleRuleChange(idx, 'staminaIncrease', e.target.value)} /></label>
+                                        <label>{t('settings.rules.cw_bonus')} <input type="number" placeholder={t('common.default')} value={rule.carryWeightIncrease ?? ''} onChange={e => handleRuleChange(idx, 'carryWeightIncrease', e.target.value)} /></label>
                                     </div>
                                 </div>
                             ))}
@@ -1416,7 +1679,7 @@ const SettingsModal = ({ settings, rules, onClose, onSaveSettings, onSaveRules, 
 
 const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
     uiSettings, keyboardSelectedNodeId, onUpdateNodePosition,
-    onUpdateNodes, onNodeClick, onTreeContextMenu, availablePerks,
+    onUpdateNodes, onNodeClick, onTreeContextMenu, formLists, 
     availableReqs, availableTrees, onRequestBrowse, onLegendary, globalSettings }: {
         treeData: SkillTreeData,
         isEditorMode: boolean,
@@ -1427,7 +1690,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
         onTreeContextMenu?: (e: React.MouseEvent, name: string) => void,
         globalSettings?: SettingsData | null,
         uiSettings?: UISettings | null,
-        availablePerks?: AvailablePerk[],
+        formLists?: Record<string, AvailablePerk[]>, 
         availableReqs: RequirementDef[],
         availableTrees: string[],
         onRequestBrowse: (field: string) => void,
@@ -1680,12 +1943,27 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
             if (connectingFrom !== clickedNode.id && onUpdateNodes) {
                 let newNodes = [...treeData.nodes];
                 const srcIdx = newNodes.findIndex(n => n.id === connectingFrom);
-                if (srcIdx >= 0 && !newNodes[srcIdx].links.includes(clickedNode.id)) {
-                    newNodes[srcIdx] = { ...newNodes[srcIdx], links: [...newNodes[srcIdx].links, clickedNode.id] };
+
+                if (srcIdx >= 0) {
+                    const isLinked = newNodes[srcIdx].links.includes(clickedNode.id);
+
+                    if (isLinked) {
+                        // Já está conectado: Remove a conexão
+                        newNodes[srcIdx] = {
+                            ...newNodes[srcIdx],
+                            links: newNodes[srcIdx].links.filter(id => id !== clickedNode.id)
+                        };
+                    } else {
+                        // Não está conectado: Adiciona a conexão
+                        newNodes[srcIdx] = {
+                            ...newNodes[srcIdx],
+                            links: [...newNodes[srcIdx].links, clickedNode.id]
+                        };
+                    }
                     onUpdateNodes(treeData.name, newNodes);
                 }
             }
-            setConnectingFrom(null);
+            setConnectingFrom(null); // Sai do modo de conexão após o clique
         } else if (isEditorMode && !connectingFrom) {
             if (!hasDraggedNode.current) setEditingNode({ node: clickedNode });
         } else if (!isEditorMode && onNodeClick) {
@@ -1757,6 +2035,12 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                 </div>
             )}
             <div className="tree-title" style={{ '--tree-glow': treeColor } as React.CSSProperties}>
+                {connectingFrom && (
+                    <div className="connecting-indicator" style={{ color: '#ffeb3b', fontSize: '1.1rem', marginBottom: '5px', textShadow: '0 2px 4px rgba(0,0,0,0.8)', fontFamily: 'Sovngarde, Arial, sans-serif' }}>
+                        {t('perk_editor.connecting_overlay')}
+                    </div>
+                )}
+
                 {canLegendary && !isEditorMode && (
                     <div
                         className="legendary-btn-container"
@@ -1813,11 +2097,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                     <button className="add-first-perk-btn" onClick={() => setEditingNode({ node: { x: 50, y: 50, perkCost: 1, requirements: [], links: [] } })}>{t('perk_editor.add_first_perk')}</button>
                 )}
 
-                {connectingFrom && (
-                    <div className="connecting-overlay">
-                        {t('perk_editor.connecting_overlay')}
-                    </div>
-                )}
+                
 
                 {/*{treeData.nodes.map((node) => (*/}
                 {/*    <PerkNodeElement*/}
@@ -1844,8 +2124,9 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                     const isBaseRank = safeIdx === 0;
                     const currentData = isBaseRank ? nodeToShow : nodeToShow.nextRanks![safeIdx - 1];
                     const resolveReqValue = (req: Requirement) => {
-                        if (req.type === 'perk') {
-                            return availablePerks?.find(p => p.id === req.value)?.name || req.value;
+                        // Se a lista desse tipo de requisito existir no nosso dicionário, procura nela:
+                        if (formLists && formLists[req.type]) {
+                            return formLists[req.type].find(item => item.id === req.value)?.name || req.value;
                         }
                         return req.value;
                     };
@@ -1883,12 +2164,13 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                                     <ul>
                                         {currentData.requirements.map((req, i) => (
                                             <li key={i} className={req.isMet ? 'req-met' : 'req-unmet'} >
+                                                {req.isNot && <span style={{ color: '#f44336', fontWeight: 'bold', marginRight: '5px' }}>({t('common.not')})</span>}
+
                                                 {t(`reqs.${req.type}`, {
                                                     val: resolveReqValue(req),
                                                     target: req.target || treeData.displayName || treeData.name
                                                 })}
-                                                {/* Visual Indicator for OR */}
-                                                {req.isOr && <span style={{ color: '#ff9800', fontWeight: 'bold', marginLeft: '5px' }}> (OR)</span>}
+                                                {req.isOr && <span style={{ color: '#ff9800', fontWeight: 'bold', marginLeft: '5px' }}> ({t('common.or')})</span>}
                                             </li>
                                         ))}
                                     </ul>
@@ -1919,16 +2201,26 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                     }}>{t('perk_editor.context.delete')}</button>
                 </div>
             )}
-            {editingNode && availablePerks && <PerkEditorModal node={editingNode.node} availableTrees={availableTrees} availablePerks={availablePerks} availableReqs={availableReqs} onRequestBrowse={onRequestBrowse} onSave={handleNodeSave} onClose={() => setEditingNode(null)} />}
+            {editingNode && formLists && (
+                <PerkEditorModal
+                    node={editingNode.node}
+                    availableTrees={availableTrees}
+                    formLists={formLists}
+                    availableReqs={availableReqs}
+                    onRequestBrowse={onRequestBrowse}
+                    onSave={handleNodeSave}
+                    onClose={() => setEditingNode(null)}
+                />
+            )}
         </div>
     );
 });
 
 const SkillTreeDetail = ({
-    trees, initialSkillName, isEditorMode, uiSettings, globalSettings, availablePerks, availableReqs, availableTrees, onRequestBrowse,
+    trees, initialSkillName, isEditorMode, uiSettings, globalSettings, formLists, availableReqs, availableTrees, onRequestBrowse,
     onUpdateNodePosition, onUpdateNodes, onClose, onNodeClick, onTreeContextMenu, onLegendary
 }: {
-    trees: SkillTreeData[], initialSkillName: string, isEditorMode: boolean, globalSettings: SettingsData | null, availablePerks?: AvailablePerk[], availableReqs: RequirementDef[], availableTrees: string[], onRequestBrowse: (field: string) => void,
+        trees: SkillTreeData[], initialSkillName: string, isEditorMode: boolean, globalSettings: SettingsData | null, formLists?: Record<string, AvailablePerk[]>, availableReqs: RequirementDef[], availableTrees: string[], onRequestBrowse: (field: string) => void,
     onUpdateNodePosition: (t: string, n: string, x: number, y: number) => void,
     onUpdateNodes?: (t: string, nodes: PerkNode[]) => void,
     uiSettings: UISettings | null,
@@ -2041,7 +2333,7 @@ const SkillTreeDetail = ({
                                 isEditorMode={!!isEditorMode}
                                 keyboardSelectedNodeId={tree.name === trees[currentIndex]?.name ? keyboardNodeId : null}
                                 globalSettings={globalSettings}
-                                availablePerks={availablePerks}
+                                formLists={formLists}
                                 availableReqs={availableReqs}
                                 availableTrees={availableTrees}
                                 onRequestBrowse={onRequestBrowse}
@@ -2079,37 +2371,31 @@ const UISettingsModal = ({ availableLanguages, settings, onClose, onSave }: {
                 <div className="tooltip-divider" style={{ width: '100%', marginBottom: '20px' }}></div>
                 <label style={{ fontSize: '1.1rem', color: '#ccc', display: 'flex', flexDirection: 'column', gap: '5px' }}>
                     {t('ui_options.language_label')}
-                    <select
-                        name="language"
+                    <CustomSelect
+                        options={availableLanguages.map(lang => ({ value: lang, label: lang.toUpperCase() }))}
                         value={formData.language}
-                        onChange={handleChange}
-                        className="skyrim-select"
-                        style={{ width: '100%' }}
-                    >
-                        {availableLanguages.map(lang => (
-                            <option key={lang} value={lang}>
-                                {lang.toUpperCase()}
-                            </option>
-                        ))}
-                    </select>
+                        onChange={(val) => setFormData(prev => ({ ...prev, language: val as Language }))}
+                        width="100%"
+                        disableSearch={true}
+                    />
                 </label>
 
                 <div className="tooltip-divider" style={{ width: '100%', margin: '10px 0' }}></div>
                 <div className="settings-grid compact-grid" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                     <label style={{ fontSize: '1.2rem', display: 'flex', flexDirection: 'column', gap: '5px' }}>
                         {t('ui_options.column_preview_label')}
-                        <select
-                            name="columnPreviewMode"
+                        <CustomSelect
+                            options={[
+                                { value: 'full', label: t('ui_options.preview_modes.full') },
+                                { value: 'bg', label: t('ui_options.preview_modes.bg') },
+                                { value: 'tree', label: t('ui_options.preview_modes.tree') },
+                                { value: 'none', label: t('ui_options.preview_modes.none') }
+                            ]}
                             value={formData.columnPreviewMode || 'full'}
-                            onChange={handleChange}
-                            className="skyrim-select"
-                            style={{ width: '100%' }}
-                        >
-                            <option value="full">{t('ui_options.preview_modes.full')}</option>
-                            <option value="bg">{t('ui_options.preview_modes.bg')}</option>
-                            <option value="tree">{t('ui_options.preview_modes.tree')}</option>
-                            <option value="none">{t('ui_options.preview_modes.none')}</option>
-                        </select>
+                            onChange={(val) => setFormData(prev => ({ ...prev, columnPreviewMode: val }))}
+                            width="100%"
+                            disableSearch={true}
+                        />
                     </label>
                     <label className="checkbox-label" style={{ fontSize: '1.2rem' }}>
                         <input type="checkbox" name="hideLockedTreeNames" checked={formData.hideLockedTreeNames} onChange={handleChange} />
@@ -2148,11 +2434,11 @@ const UISettingsModal = ({ availableLanguages, settings, onClose, onSave }: {
     );
 };
 
-const SkillColumn = memo(({ treeData, uiSettings, availablePerks, onSelect, onContextMenu, isForcedHover }: {
+const SkillColumn = memo(({ treeData, uiSettings, globalSettings, formLists, onSelect, onContextMenu, isForcedHover }: {
     treeData: SkillTreeData,
     uiSettings: UISettings | null,
     globalSettings: SettingsData | null,
-    availablePerks: AvailablePerk[],
+    formLists?: Record<string, AvailablePerk[]>, 
     onSelect: (name: string) => void,
     onContextMenu: (e: React.MouseEvent, name: string) => void,
     isForcedHover?: boolean
@@ -2192,8 +2478,9 @@ const SkillColumn = memo(({ treeData, uiSettings, availablePerks, onSelect, onCo
     }, [onContextMenu, treeData.name]);
 
     const resolveReqValue = (req: Requirement) => {
-        if (req.type === 'perk') {
-            return availablePerks?.find(p => p.id === req.value)?.name || req.value;
+        // Se a lista desse tipo de requisito existir no nosso dicionário, procura nela:
+        if (formLists && formLists[req.type]) {
+            return formLists[req.type].find(item => item.id === req.value)?.name || req.value;
         }
         return req.value;
     };
@@ -2236,6 +2523,8 @@ const SkillColumn = memo(({ treeData, uiSettings, availablePerks, onSelect, onCo
                     <ul className="locked-req-list">
                         {treeData.treeRequirements.map((req, idx) => (
                             <li key={idx} className={req.isMet ? 'req-met' : 'req-unmet'}>
+                                {req.isNot && <span style={{ color: '#f44336', fontWeight: 'bold', marginRight: '5px' }}>[NOT] </span>}
+
                                 {t(`reqs.${req.type}`, {
                                     val: resolveReqValue(req),
                                     target: req.target || treeData.displayName || treeData.name
@@ -2433,7 +2722,7 @@ const LevelUpModal = ({ trees, settings, rules, targetLevel, onSelect }: {
                                     className={`level-up-category-btn ${activeCategory === cat ? 'active' : ''}`}
                                     onClick={() => setActiveCategory(cat)}
                                 >
-                                    {cat.toUpperCase()}
+                                    {cat === "All" ? t('common.all').toUpperCase() : cat.toUpperCase()}
                                 </button>
                             ))}
                         </div>
@@ -2472,19 +2761,36 @@ const LevelUpModal = ({ trees, settings, rules, targetLevel, onSelect }: {
                         </div>
                     </div>
 
-                    <div className="attribute-selection-section">
-                        <h3>{t('level_up.choose_attr')}</h3>
-                        <div className="level-up-options-row">
-                            <button className={`attribute-btn health ${selectedAttribute === 'Health' ? 'selected-attr' : ''}`} onClick={() => setSelectedAttribute('Health')}>
-                                {t('header.health')} (+{effSettings.healthIncrease})
-                            </button>
-                            <button className={`attribute-btn magicka ${selectedAttribute === 'Magicka' ? 'selected-attr' : ''}`} onClick={() => setSelectedAttribute('Magicka')}>
-                                {t('header.magicka')} (+{effSettings.magickaIncrease})
-                            </button>
-                            <button className={`attribute-btn stamina ${selectedAttribute === 'Stamina' ? 'selected-attr' : ''}`} onClick={() => setSelectedAttribute('Stamina')}>
-                                {t('header.stamina')} (+{effSettings.staminaIncrease})
-                            </button>
-                        </div>
+                    <div className="level-up-options-row">
+                        {['Health', 'Magicka', 'Stamina'].map(attr => {
+                            const isSelected = selectedAttribute === attr;
+                            const incValue = attr === 'Health' ? effSettings.healthIncrease : attr === 'Magicka' ? effSettings.magickaIncrease : effSettings.staminaIncrease;
+
+                            // Verifica se este botão dá carry weight
+                            const cwInc = effSettings.carryWeightIncrease || 0;
+                            const cwMethod = effSettings.carryWeightMethod || 'none';
+                            const linked = effSettings.carryWeightLinkedAttributes || [];
+                            const givesCW = cwInc > 0 && (cwMethod === 'auto' || (cwMethod === 'linked' && linked.includes(attr)));
+
+                            return (
+                                <div key={attr} style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                    {/* "Janela de conversa" simulada como um pequeno balão sobre o botão */}
+                                    {givesCW && (
+                                        <div className="cw-bonus-bubble" style={{ opacity: isSelected ? 1 : 0.7 }}>
+                                            {t('level_up.cw_bonus_tooltip', { amount: cwInc })}
+                                            <div className="cw-bonus-triangle" />
+                                        </div>
+                                    )}
+                                    <button
+                                        className={`attribute-btn ${attr.toLowerCase()} ${isSelected ? 'selected-attr' : ''}`}
+                                        onClick={() => setSelectedAttribute(attr)}
+                                        style={{ marginTop: '10px' }}
+                                    >
+                                        {t(`header.${attr.toLowerCase()}`)} (+{incValue})
+                                    </button>
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
 
@@ -2519,13 +2825,13 @@ const ConfirmPerkModal = ({ perkName, cost, onConfirm, onCancel }: { perkName: s
     );
 };
 
-const PerkEditorModal = ({ node, availableTrees, availablePerks, availableReqs, onSave, onClose, onRequestBrowse }: {
-    node: Partial<PerkNode>, availableTrees: string[], availablePerks: AvailablePerk[], availableReqs: RequirementDef[], onSave: (n: PerkNode) => void,
+const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, onSave, onClose, onRequestBrowse }: {
+    node: Partial<PerkNode>, availableTrees: string[], formLists: Record<string, AvailablePerk[]>, availableReqs: RequirementDef[], onSave: (n: PerkNode) => void,
     onClose: (currentTreeName?: string) => void, onRequestBrowse: (field: string) => void
 }) => {
     const [formData, setFormData] = useState<Partial<PerkNode>>(node);
     const [selectingFormTarget, setSelectingFormTarget] = useState<string | null>(null);
-    const [selectingReqTarget, setSelectingReqTarget] = useState<{ isRank: boolean, rIdx: number, reqIdx: number } | null>(null);
+    const [selectingReqTarget, setSelectingReqTarget] = useState<{ isRank: boolean, rIdx: number, reqIdx: number, type: string } | null>(null);
 
     useEffect(() => {
         const handleFileSelected = (e: any) => {
@@ -2544,13 +2850,14 @@ const PerkEditorModal = ({ node, availableTrees, availablePerks, availableReqs, 
     };
 
     const handleFormSelect = (id: string) => {
-        const selected = availablePerks.find(p => p.id === id);
+        const perkList = formLists['perk'] || [];
+        const selected = perkList.find(p => p.id === id);
 
         const generatedRanks: PerkRank[] = [];
         let currentNextId = selected?.nextPerk;
         let safetyCounter = 0;
         while (currentNextId && safetyCounter < 10) {
-            const nextP = availablePerks.find(p => p.id === currentNextId);
+            const nextP = perkList.find(p => p.id === currentNextId);
             if (!nextP) break;
 
             generatedRanks.push({
@@ -2673,7 +2980,7 @@ const PerkEditorModal = ({ node, availableTrees, availablePerks, availableReqs, 
                         <div className="settings-grid">
                             <label>{t('perk_editor.base_engine')}
                                 <button className="form-selector-trigger-btn" onClick={() => setSelectingFormTarget('base')}>
-                                    {formData.perk ? (availablePerks.find(p => p.id === formData.perk)?.name || formData.perk) : t('common.click_select')}
+                                    {formData.perk ? (formLists['perk']?.find(p => p.id === formData.perk)?.name || formData.perk) : t('common.click_select')}
                                 </button>
                             </label>
                             <label>{t('perk_editor.name_ui')} <input type="text" name="name" value={formData.name || ""} onChange={handleChange} /></label>
@@ -2687,7 +2994,7 @@ const PerkEditorModal = ({ node, availableTrees, availablePerks, availableReqs, 
                             </label>
                             <label>{t('tree_editor.icon_path')}
                                 <div className="form-row">
-                                    <input type="text" name="icon" value={formData.icon || ""} onChange={handleChange} placeholder="Ex: ./icons/perk.svg" style={{ flex: 1 }} />
+                                    <input type="text" name="icon" value={formData.icon || ""} onChange={handleChange} placeholder={t('tree_editor.bg_placeholder')} style={{ flex: 1 }} />
                                     <button className="browse-btn" onClick={() => onRequestBrowse('icon')}>{t('common.browse')}</button>
                                 </div>
                             </label>
@@ -2698,10 +3005,12 @@ const PerkEditorModal = ({ node, availableTrees, availablePerks, availableReqs, 
                             <h4 style={{ color: '#ffd700', marginBottom: '5px' }}>{t('perk_editor.reqs_rank_1')}</h4>
                             {formData.requirements?.map((req, idx) => (
                                 <RequirementInputRow
-                                    key={idx} req={req} availableReqs={availableReqs} availableTrees={availableTrees} availablePerks={availablePerks}
+                                    key={idx} req={req}
+                                    availableReqs={availableReqs} availableTrees={availableTrees}
+                                    formLists={formLists}
                                     onUpdate={(field, val) => updateReq(idx, field, val)}
                                     onRemove={() => removeReq(idx)}
-                                    onSelectPerk={() => setSelectingReqTarget({ isRank: false, rIdx: -1, reqIdx: idx })}
+                                    onSelectTarget={(type) => setSelectingReqTarget({ isRank: false, rIdx: -1, reqIdx: idx, type })}
                                 />
                             ))}
                             <button className="add-btn" onClick={addReq} style={{ width: '200px', padding: '5px' }}>{t('perk_editor.add_req')}</button>
@@ -2720,7 +3029,7 @@ const PerkEditorModal = ({ node, availableTrees, availablePerks, availableReqs, 
                                     <div className="settings-grid">
                                         <label>{t('perk_editor.base_engine')}
                                             <button className="form-selector-trigger-btn" onClick={() => setSelectingFormTarget(idx.toString())}>
-                                                {rank.perk ? (availablePerks.find(p => p.id === rank.perk)?.name || rank.perk) : t('common.click_select')}
+                                                {rank.perk ? (formLists['perk']?.find(p => p.id === rank.perk)?.name || rank.perk) : t('common.click_select')}
                                             </button>
                                         </label>
                                         <label>{t('perk_editor.name_ui')} <input type="text" value={rank.name} onChange={e => updateRank(idx, 'name', e.target.value)} /></label>
@@ -2736,10 +3045,14 @@ const PerkEditorModal = ({ node, availableTrees, availablePerks, availableReqs, 
                                     <div style={{ marginTop: '10px' }}>
                                         {rank.requirements?.map((req, rIdx) => (
                                             <RequirementInputRow
-                                                key={rIdx} req={req} availableReqs={availableReqs} availableTrees={availableTrees} availablePerks={availablePerks}
+                                                key={rIdx}
+                                                req={req}
+                                                availableReqs={availableReqs}
+                                                availableTrees={availableTrees}
+                                                formLists={formLists}
                                                 onUpdate={(field, val) => updateRankReq(idx, rIdx, field, val)}
                                                 onRemove={() => removeRankReq(idx, rIdx)}
-                                                onSelectPerk={() => setSelectingReqTarget({ isRank: true, rIdx: idx, reqIdx: rIdx })}
+                                                onSelectTarget={(type) => setSelectingReqTarget({ isRank: true, rIdx: idx, reqIdx: rIdx, type })}
                                             />
                                         ))}
                                         <button className="add-btn" onClick={() => addRankReq(idx)} style={{ padding: '5px', marginTop: '10px', width: '200px' }}>{t('perk_editor.rank_req_btn')}</button>
@@ -2765,16 +3078,20 @@ const PerkEditorModal = ({ node, availableTrees, availablePerks, availableReqs, 
                 </div>
             </div>
 
-            {selectingFormTarget !== null && <FormSelectorModal items={availablePerks} onClose={() => setSelectingFormTarget(null)} onSelect={handleFormSelect} />}
-            {selectingReqTarget !== null && (
-                <FormSelectorModal items={availablePerks} onClose={() => setSelectingReqTarget(null)} onSelect={(id) => {
-                    if (selectingReqTarget.isRank) {
-                        updateRankReq(selectingReqTarget.rIdx, selectingReqTarget.reqIdx, 'value', id);
-                    } else {
-                        updateReq(selectingReqTarget.reqIdx, 'value', id);
-                    }
-                    setSelectingReqTarget(null);
-                }} />
+            {selectingFormTarget !== null && formLists['perk'] && (
+                <FormSelectorModal items={formLists['perk']} onClose={() => setSelectingFormTarget(null)} onSelect={handleFormSelect} />
+            )}
+
+            {selectingReqTarget !== null && formLists[selectingReqTarget.type] && (
+                <FormSelectorModal
+                    items={formLists[selectingReqTarget.type]}
+                    onClose={() => setSelectingReqTarget(null)}
+                    onSelect={(id) => {
+                        if (selectingReqTarget.isRank) updateRankReq(selectingReqTarget.rIdx, selectingReqTarget.reqIdx, 'value', id);
+                        else updateReq(selectingReqTarget.reqIdx, 'value', id);
+                        setSelectingReqTarget(null);
+                    }}
+                />
             )}
         </>, document.body
     );
@@ -2798,7 +3115,6 @@ const ConfirmationModal = ({ title, message, onConfirm, onCancel }: { title: str
 
 // --- Main App ---
 function App() {
-    const [isVerifyingLevel, setIsVerifyingLevel] = useState(false);
     const [playerData, setPlayerData] = useState<PlayerData | null>(null);
     const [skillTrees, setSkillTrees] = useState<SkillTreeData[]>([]);
     const [availableReqs, setAvailableReqs] = useState<RequirementDef[]>([]);
@@ -2810,7 +3126,7 @@ function App() {
     const [isEditorMode, setIsEditorMode] = useState(false);
     const [isExiting, setIsExiting] = useState(false);
     const [isLoaded, setIsLoaded] = useState(false);
-    const [availablePerks, setAvailablePerks] = useState<AvailablePerk[]>([]);
+    const [formLists, setFormLists] = useState<Record<string, AvailablePerk[]>>({});
     const [confirmingPerk, setConfirmingPerk] = useState<PerkNode | null>(null);
     const [settings, setSettings] = useState<SettingsData | null>(null);
     const [rules, setRules] = useState<LevelRule[]>([]);
@@ -2831,9 +3147,17 @@ function App() {
         : ["All", "Combat", "Magic", "Stealth", "Special", "Custom"];
     const allTreeNames = skillTrees.map(t => t.name);
     const filteredTrees = useMemo(() => {
-        if (activeCategory === "All") return skillTrees;
-        return skillTrees.filter(tree => tree.category === activeCategory);
-    }, [skillTrees, activeCategory]);
+        let availableTrees = skillTrees;
+        // Se NÃO estiver no modo editor, oculta as árvores marcadas com isHidden
+        if (!isEditorMode) {
+            availableTrees = availableTrees.filter(t => !t.isHidden);
+        }
+
+        if (activeCategory !== "All") {
+            availableTrees = availableTrees.filter(tree => tree.category === activeCategory);
+        }
+        return availableTrees;
+    }, [skillTrees, activeCategory, isEditorMode]);
 
     const [emblaRef, emblaApi] = useEmblaCarousel({
         loop: true,
@@ -2844,8 +3168,8 @@ function App() {
 
     const shouldScrollOnBack = useRef(false);
     const shouldShowLevelUp = useMemo(() => {
-        return playerData?.pendingLevelUp && !isEditorMode && settings && !isVerifyingLevel;
-    }, [playerData?.pendingLevelUp, isEditorMode, settings, isVerifyingLevel]);
+        return playerData?.isLevelUpMenuOpen && !isEditorMode && settings;
+    }, [playerData?.isLevelUpMenuOpen, isEditorMode, settings]);
 
     const handleCloseDetail = useCallback((currentTreeName?: string) => {
         if (currentTreeName) {
@@ -2981,13 +3305,44 @@ function App() {
     }, []);
 
     useEffect(() => {
-        const handleTriggerExit = () => {
-            closeMenuWithAnimation();
+        const handleHardwareBack = () => {
+            // A ordem aqui define a prioridade de fechamento (do mais alto para o mais baixo)
+            if (confirmAction) {
+                setConfirmAction(null);
+            } else if (browserField) {
+                setBrowserField(null);
+            } else if (isCreatingTree) {
+                setIsCreatingTree(false);
+            } else if (isEditingUISettings) {
+                setIsEditingUISettings(false);
+            } else if (editingTree) {
+                setEditingTree(null);
+            } else if (isEditingSettings) {
+                setIsEditingSettings(false);
+            } else if (confirmingPerk) {
+                setConfirmingPerk(null);
+            } else if (selectedSkill) {
+                // Se estiver dentro de uma constelação, volta pro carrossel
+                handleCloseDetail(selectedSkill);
+            } else if (playerData?.isLevelUpMenuOpen && !isEditorMode) {
+                // Se o Level Up estiver aberto, não faz nada (obriga o jogador a alocar pontos)
+            } else {
+                // Se estiver na tela principal e sem modais, fecha o menu
+                closeMenuWithAnimation();
+            }
         };
-        window.addEventListener('triggerExitAnimation', handleTriggerExit);
 
-        return () => window.removeEventListener('triggerExitAnimation', handleTriggerExit);
-    }, [closeMenuWithAnimation]);
+        window.addEventListener('HardwareBack', handleHardwareBack);
+
+        return () => window.removeEventListener('HardwareBack', handleHardwareBack);
+
+        // É importante passar todas as dependências de estado para que o React saiba a ordem certa
+    }, [
+        confirmAction, browserField, isCreatingTree, isEditingUISettings,
+        editingTree, isEditingSettings, confirmingPerk, selectedSkill,
+        playerData?.isLevelUpMenuOpen, isEditorMode, handleCloseDetail,
+        closeMenuWithAnimation
+    ]);
 
     const updateTreeNodes = useCallback((treeName: string, newNodes: PerkNode[]) => {
         setSkillTrees(prevTrees => prevTrees.map(t => {
@@ -3038,30 +3393,22 @@ function App() {
         wheelTimeout.current = setTimeout(() => { wheelTimeout.current = null; }, 100);
     }, [emblaApi]);
 
-    useEffect(() => {
-        console.log("[PrismaUI] App carregado. Iniciando sincronização de nível...");
-        setIsVerifyingLevel(true);
 
-        if (typeof (window as any).requestSkills === 'function') {
-            (window as any).requestSkills("");
-        }
-    }, []);
+    // Trava para evitar múltiplas chamadas do React Strict Mode
+    const hasRequestedSkills = useRef(false);
 
     useEffect(() => {
         const handleUpdateSkills = (event: any) => {
             const data = event.detail;
             if (!data || !data.player) {
                 console.warn("[PrismaUI] Dados inválidos recebidos.");
-
-                setIsVerifyingLevel(false);
                 setPlayerData(null);
                 setSkillTrees([]);
                 setIsLoaded(false);
                 return;
             }
-            console.log(`[PrismaUI] Dados recebidos. Level: ${data.player.level}, Pending: ${data.player.pendingLevelUp}`);
+            console.log(`[PrismaUI] Dados recebidos. Level: ${data.player.level}, MenuOpen: ${data.player.isLevelUpMenuOpen}`);
 
-            setIsVerifyingLevel(false);
             if (data.fallbackTranslation && Object.keys(data.fallbackTranslation).length > 0) {
                 addTranslation('en', data.fallbackTranslation);
             }
@@ -3089,7 +3436,7 @@ function App() {
                 if (data.rules) setRules(data.rules);
                 if (data.uiSettings) setUiSettings(data.uiSettings);
                 if (data.availableRequirements) setAvailableReqs(data.availableRequirements);
-                if (data.availablePerks) setAvailablePerks(data.availablePerks);
+                if (data.formLists) setFormLists(data.formLists);
                 if (data.availableLanguages) setAvailableLanguages(data.availableLanguages);
                 setIsLoaded(false);
                 setIsExiting(false);
@@ -3124,7 +3471,15 @@ function App() {
         };
 
         window.addEventListener('updateSkills', handleUpdateSkills);
-        if (typeof (window as any).requestSkills === 'function') (window as any).requestSkills("");
+
+        // Faz a requisição inicial estritamente UMA vez
+        if (!hasRequestedSkills.current) {
+            hasRequestedSkills.current = true;
+            if (typeof (window as any).requestSkills === 'function') {
+                (window as any).requestSkills("");
+            }
+        }
+
         return () => window.removeEventListener('updateSkills', handleUpdateSkills);
     }, []);
 
@@ -3222,7 +3577,7 @@ function App() {
                 confirmingPerk !== null ||
                 browserField !== null ||
                 isCreatingTree ||
-                (playerData?.pendingLevelUp && !isEditorMode);
+                (playerData?.isLevelUpMenuOpen && !isEditorMode);
 
             if (isAnyModalOpen || !emblaApi) return;
 
@@ -3253,7 +3608,7 @@ function App() {
         confirmingPerk,
         browserField,
         isCreatingTree,
-        playerData?.pendingLevelUp,
+        playerData?.isLevelUpMenuOpen,
         isEditorMode,
         hoveredSkillName,
         skillTrees
@@ -3319,6 +3674,26 @@ function App() {
         });
     }, []);
 
+    useEffect(() => {
+        const handleDeleteRequest = (e: any) => {
+            const treeName = e.detail.name;
+            setConfirmAction({
+                title: t('delete_tree.title'),
+                message: t('delete_tree.confirm_message', { treeName }),
+                action: () => {
+                    if (typeof (window as any).deleteTree === 'function') {
+                        (window as any).deleteTree(JSON.stringify({ name: treeName }));
+                    }
+                    setEditingTree(null);
+                    setSelectedSkill(null);
+                    setConfirmAction(null);
+                }
+            });
+        };
+        window.addEventListener('requestDeleteTree', handleDeleteRequest);
+        return () => window.removeEventListener('requestDeleteTree', handleDeleteRequest);
+    }, []);
+
     return (
         <div className={`app-container ${isLoaded ? 'loaded' : ''} ${isExiting ? 'exiting' : ''} ${uiSettings?.performanceMode ? 'performance-mode' : ''}`}>
             {playerData && <PlayerHeader player={playerData} />}
@@ -3371,7 +3746,7 @@ function App() {
                                         treeData={tree}
                                         globalSettings={settings}
                                         uiSettings={uiSettings}
-                                        availablePerks={availablePerks}
+                                        formLists={formLists}
                                         onSelect={handleCarouselSkillSelect}
                                         onContextMenu={handleTreeContextMenu}
                                         isForcedHover={isHovered}
@@ -3388,7 +3763,7 @@ function App() {
                     <div className="category-filter-container">
                         {categories.map(cat => (
                             <button key={cat} className={`category-btn ${activeCategory === cat ? 'active' : ''}`} onClick={() => setActiveCategory(cat)}>
-                                {cat.toUpperCase()}
+                                {cat === "All" ? t('common.all').toUpperCase() : cat.toUpperCase()}
                             </button>
                         ))}
                     </div>
@@ -3410,7 +3785,7 @@ function App() {
                     trees={filteredTrees}
                     isEditorMode={!!isEditorMode}
                     globalSettings={settings}
-                    availablePerks={availablePerks}
+                    formLists={formLists}
                     availableReqs={availableReqs}
                     availableTrees={allTreeNames}
                     onRequestBrowse={(field: string) => setBrowserField(field)}
@@ -3440,10 +3815,7 @@ function App() {
                     rules={rules}
                     settings={settings}
                     targetLevel={(playerData!.level || 1) + 1}
-                    onSelect={(payload) => {
-                        setIsVerifyingLevel(true);
-                        handleAttributeSelect(payload);
-                    }}
+                    onSelect={handleAttributeSelect}
                 />
             )}
 
@@ -3487,7 +3859,7 @@ function App() {
                     settings={settings}
                     availableReqs={availableReqs}
                     availableTrees={allTreeNames}
-                    availablePerks={availablePerks}
+                    formLists={formLists}
                     onRequestBrowse={(field: string) => setBrowserField(field)}
                     onClose={() => setEditingTree(null)}
                     onSave={handleSaveTreeProps}
