@@ -228,6 +228,7 @@
     "perk": "Possui Perk: {val}",
     "quest_completed": "Missão Concluída: {val}",
     "spell": "Possui Magia: {val}",
+    "book_read": "Leu o Livro: {val}",
     "item": "Possui Item: {val}",
     "location_discovered": "Local Descoberto: {val}",
     "location_cleared": "Local Limpo: {val}",

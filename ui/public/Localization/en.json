@@ -230,6 +230,7 @@
     "location_discovered": "Location Discovered: {val}",
     "location_cleared": "Location Cleared: {val}",
     "faction": "In Faction: {val}",
+    "book_read": "Book Read: {val}",
     "spell": "Has Spell: {val}",
     "item": "Has Item: {val}",
     "global": "Global: {val}",

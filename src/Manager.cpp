@@ -29,7 +29,13 @@ void Manager::PopulateAllLists() {
         });
 
     PopulateList<RE::TESFaction>("Faction", [](RE::TESFaction* faction) -> bool {
-        return faction != nullptr;
+        if (faction->IsDeleted() || faction->IsIgnored()) return false;
+        return true;
+        });
+
+    PopulateList<RE::TESObjectBOOK>("Book", [](RE::TESObjectBOOK* book) -> bool {
+        if (book->IsDeleted() || book->IsIgnored()) return false;
+        return true;
         });
 
     /*PopulateList<RE::TESFaction>("Faction");*/
@@ -43,7 +49,6 @@ void Manager::PopulateAllLists() {
     /*PopulateList<RE::AlchemyItem>("Potion");
     PopulateList<RE::IngredientItem>("Ingredient");
     PopulateList<RE::ScrollItem>("Scroll");
-    PopulateList<RE::TESObjectBOOK>("Book");
     PopulateList<RE::TESAmmo>("Ammo");
     PopulateList<RE::TESObjectMISC>("Misc");
     PopulateList<RE::TESKey>("Key");

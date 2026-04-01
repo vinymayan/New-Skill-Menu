@@ -13,10 +13,19 @@ static std::vector<std::string> availableLanguagesCache;
 static bool g_isLevelUpMenuOpen = false;
 
 struct CachedTreeData {
-    nlohmann::json data;
+    json data;
     std::filesystem::file_time_type lastWriteTime;
 };
 static std::unordered_map<std::string, CachedTreeData> g_treeCache;
+
+static json g_settingsCache;
+static bool g_settingsLoaded = false;
+
+static json g_rulesCache;
+static bool g_rulesLoaded = false;
+
+static json g_uiSettingsCache;
+static bool g_uiSettingsLoaded = false;
 
 static void PlayUISound(const char* soundEditorID) {
     auto audioManager = RE::BSAudioManager::GetSingleton();
@@ -1264,13 +1273,19 @@ void GenerateAllVanillaTrees() {
 }
 
 json GetLevelRules() {
+    if (g_rulesLoaded) {
+        return g_rulesCache;
+    }
+
     std::filesystem::path rulesPath("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Rules.json");
 
     if (std::filesystem::exists(rulesPath)) {
         std::ifstream file(rulesPath);
         if (file.is_open()) {
             try {
-                return json::parse(file);
+                g_rulesCache = json::parse(file);
+                g_rulesLoaded = true;
+                return g_rulesCache;
             }
             catch (const std::exception& e) {
                 logger::error("Erro ao ler rules.json: {}", e.what());
@@ -1278,17 +1293,14 @@ json GetLevelRules() {
         }
     }
 
-    // Padrão se não existir: Regra nível 1
-    // skillCap 100 é o padrão do Skyrim, mas você pode mudar aqui
-    json defaultRules = json::array({
-        });
-
-    // Cria o arquivo se não existir
+    json defaultRules = json::array({});
     std::filesystem::create_directories("Data\\PrismaUI\\views\\" PRODUCT_NAME);
     std::ofstream file(rulesPath);
     if (file.is_open()) file << defaultRules.dump(4);
 
-    return defaultRules;
+    g_rulesCache = defaultRules;
+    g_rulesLoaded = true;
+    return g_rulesCache;
 }
 
 void SaveLevelRulesToFile(const json& rulesArr) {
@@ -1298,12 +1310,17 @@ void SaveLevelRulesToFile(const json& rulesArr) {
         file << rulesArr.dump(4);
         logger::info("rules.json salvo com sucesso.");
     }
+    g_rulesCache = rulesArr;
+    g_rulesLoaded = true;
 }
 
 json GetSettings() {
+    if (g_settingsLoaded) {
+        return g_settingsCache;
+    }
+
     std::filesystem::path settingsPath("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Settings.json");
 
-    // Nova estrutura padrão
     json defaultSettings = {
         {"base", {
             {"perksPerLevel", 1},
@@ -1321,7 +1338,7 @@ json GetSettings() {
             {"useBaseSkillLevel", true},
             {"applyVanillaInitialLevels", true},
             {"carryWeightIncrease", 0.0f},
-            {"carryWeightMethod", "none"}, 
+            {"carryWeightMethod", "none"},
             {"carryWeightLinkedAttributes", json::array({"Stamina"})}
         }},
         {"categories", {"Combat", "Magic", "Stealth", "Special", "Custom"}},
@@ -1341,20 +1358,16 @@ json GetSettings() {
         if (file.is_open()) {
             try {
                 json loadedSettings = json::parse(file);
+                if (loadedSettings.contains("levelRules")) loadedSettings.erase("levelRules");
 
-                if (loadedSettings.contains("levelRules")) {
-                    loadedSettings.erase("levelRules");
-                }
-
-                // Mescla os padrões
                 for (auto& [key, value] : defaultSettings["base"].items()) {
-                    if (!loadedSettings["base"].contains(key)) {
-                        loadedSettings["base"][key] = value;
-                    }
+                    if (!loadedSettings["base"].contains(key)) loadedSettings["base"][key] = value;
                 }
-
                 if (!loadedSettings.contains("categories")) loadedSettings["categories"] = defaultSettings["categories"];
-                return loadedSettings;
+
+                g_settingsCache = loadedSettings;
+                g_settingsLoaded = true;
+                return g_settingsCache;
             }
             catch (const std::exception& e) {
                 logger::error("Erro ao ler Settings.json: {}", e.what());
@@ -1362,12 +1375,13 @@ json GetSettings() {
         }
     }
 
-    // Se não existir ou deu erro, cria a pasta e o arquivo com os padrões
     std::filesystem::create_directories("Data\\PrismaUI\\views\\" PRODUCT_NAME);
     std::ofstream file(settingsPath);
     if (file.is_open()) file << defaultSettings.dump(4);
 
-    return defaultSettings;
+    g_settingsCache = defaultSettings;
+    g_settingsLoaded = true;
+    return g_settingsCache;
 }
 
 // Função que calcula os valores efetivos para um determinado nível
@@ -1425,6 +1439,9 @@ void SaveSettingsToFile(const json& settingsObj) {
     if (file.is_open()) {
         file << settingsObj.dump(4);
     }
+
+    g_settingsCache = settingsObj;
+    g_settingsLoaded = true;
 }
 
 
@@ -1523,9 +1540,12 @@ json GetLoadedSkillTreeConfigs() {
 }
 
 json GetUISettings() {
+    if (g_uiSettingsLoaded) {
+        return g_uiSettingsCache;
+    }
+
     std::filesystem::path settingsPath("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\uisettings.json");
 
-    // Configurações padrão da UI
     json defaultUISettings = {
         {"language", "en"},
         {"hideLockedTreeNames", true},
@@ -1541,13 +1561,15 @@ json GetUISettings() {
         if (file.is_open()) {
             try {
                 json loadedSettings = json::parse(file);
-                // Mescla com os padrões para garantir que novas chaves existam
                 for (auto& [key, value] : defaultUISettings.items()) {
                     if (!loadedSettings.contains(key)) {
                         loadedSettings[key] = value;
                     }
                 }
-                return loadedSettings;
+
+                g_uiSettingsCache = loadedSettings;
+                g_uiSettingsLoaded = true;
+                return g_uiSettingsCache;
             }
             catch (const std::exception& e) {
                 logger::error("Erro ao ler uisettings.json: {}", e.what());
@@ -1555,12 +1577,13 @@ json GetUISettings() {
         }
     }
 
-    // Se não existir, cria
     std::filesystem::create_directories("Data\\PrismaUI\\views\\" PRODUCT_NAME);
     std::ofstream file(settingsPath);
     if (file.is_open()) file << defaultUISettings.dump(4);
 
-    return defaultUISettings;
+    g_uiSettingsCache = defaultUISettings;
+    g_uiSettingsLoaded = true;
+    return g_uiSettingsCache;
 }
 
 // Salvar configurações da UI vindas do React
@@ -1575,8 +1598,12 @@ static void SaveUISettingsFromUI(const char* jsonArgs) {
         if (file.is_open()) {
             file << newSettings.dump(4);
             file.close();
-            logger::info("uisettings.json atualizado com sucesso.");
+            logger::info("uisettings.json salvo no disco.");
         }
+
+        // ATUALIZA O CACHE DIRETAMENTE
+        g_uiSettingsCache = newSettings;
+        g_uiSettingsLoaded = true;
     }
     catch (const std::exception& e) {
         logger::error("Erro ao salvar uisettings.json: {}", e.what());
@@ -1870,6 +1897,13 @@ std::string GetPlayerSkillsJSON() {
                             if (fact) isMet = player->IsInFaction(fact);
                         }
                     }
+                    else if (reqType == "book_read") {
+                        RE::FormID bookID = ParseFormIDString(req.value("value", ""));
+                        if (bookID != 0) {
+                            auto book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookID);
+                            if (book) isMet = book->IsRead();
+                        }
+                    }
                     else isMet = true; // Fallback
                     if (req.value("isNot", false)) isMet = !isMet;
                     req["isMet"] = isMet;
@@ -1930,6 +1964,13 @@ std::string GetPlayerSkillsJSON() {
                                 if (factID != 0) {
                                     auto fact = RE::TESForm::LookupByID<RE::TESFaction>(factID);
                                     if (fact) isMet = player->IsInFaction(fact);
+                                }
+                            }
+                            else if (reqType == "book_read") {
+                                RE::FormID bookID = ParseFormIDString(req.value("value", ""));
+                                if (bookID != 0) {
+                                    auto book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookID);
+                                    if (book) isMet = book->IsRead();
                                 }
                             }
                             else isMet = true;
@@ -2025,6 +2066,13 @@ std::string GetPlayerSkillsJSON() {
                                         if (factID != 0) {
                                             auto fact = RE::TESForm::LookupByID<RE::TESFaction>(factID);
                                             if (fact) isMet = player->IsInFaction(fact);
+                                        }
+                                    }
+                                    else if (reqType == "book_read") {
+                                        RE::FormID bookID = ParseFormIDString(req.value("value", ""));
+                                        if (bookID != 0) {
+                                            auto book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookID);
+                                            if (book) isMet = book->IsRead();
                                         }
                                     }
                                     else isMet = true;
@@ -2158,6 +2206,22 @@ std::string GetPlayerSkillsJSON() {
                 });
         }
 
+        json availableBooks = json::array();
+        for (const auto& book : Manager::GetSingleton()->GetList("Book")) {
+            uint32_t localID = (book.formID & 0xFF000000) == 0xFE000000 ? (book.formID & 0xFFF) : (book.formID & 0xFFFFFF);
+
+            // Prioridade: Nome -> EditorID -> FormID
+            std::string bookName = book.name;
+            if (bookName.empty()) bookName = book.editorID;
+            if (bookName.empty()) bookName = fmt::format("{:X}", book.formID);
+
+            availableBooks.push_back({
+                {"id", fmt::format("{}|{:X}", book.pluginName, localID)},
+                {"name", bookName},
+                {"editorId", book.editorID}
+                });
+        }
+
         json availableReqs = json::array({
             //{{"id", "level"}, {"name", "Skill Level (Atual)"}},
             {{"id", "player_level"}, {"name", "Player Level"}},
@@ -2166,6 +2230,7 @@ std::string GetPlayerSkillsJSON() {
             {{"id", "location_discovered"}, {"name", "Location Discovered"}, {"isForm", true}},
             {{"id", "location_cleared"}, {"name", "Location Cleared"}, {"isForm", true}},
             {{"id", "faction"}, {"name", "In Faction"}, {"isForm", true}},
+            {{"id", "book_read"}, {"name", "Book Read"}, {"isForm", true}},
             {{"id", "spell"}, {"name", "Has Spell"}, {"isForm", true}},
             {{"id", "is_vampire"}, {"name", "Must be Vampire"}},
             {{"id", "is_werewolf"}, {"name", "Must be Werewolf"}},
@@ -2184,6 +2249,7 @@ std::string GetPlayerSkillsJSON() {
         formLists["location_discovered"] = availableLocations;
         formLists["location_cleared"] = availableLocations;
         formLists["faction"] = availableFactions;
+        formLists["book_read"] = availableBooks;
 
         json finalResponse = {
             {"player", playerData},
@@ -2441,15 +2507,8 @@ static void SaveSettingsFromUI(const char* jsonArgs) {
     if (!jsonArgs) return;
     try {
         json newSettings = json::parse(jsonArgs);
-        std::filesystem::path dir("Data\\PrismaUI\\views\\" PRODUCT_NAME);
-        if (!std::filesystem::exists(dir)) std::filesystem::create_directories(dir);
-
-        std::ofstream file("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Settings.json");
-        if (file.is_open()) {
-            file << newSettings.dump(4);
-            file.close();
-            logger::info("Settings.json atualizado com sucesso pela UI.");
-        }
+        SaveSettingsToFile(newSettings);
+        logger::info("Settings.json atualizado com sucesso pela UI (Disco e Cache).");
     }
     catch (const std::exception& e) {
         logger::error("Erro critico ao processar e salvar Settings da UI: {}", e.what());
