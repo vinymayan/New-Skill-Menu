@@ -1,4 +1,4 @@
-#include "Plugin.h"
+ï»¿#include "Plugin.h"
 #include "Hooks.h"
 #include "InputEventHandler.h"
 #include "Manager.h"
@@ -151,7 +151,7 @@ namespace PapyrusAPI {
 }
 
 // ==========================================
-// CALLABACKS DE SERIALIZAÇÃO (Save/Load)
+// CALLABACKS DE SERIALIZAÃ‡ÃƒO (Save/Load)
 // ==========================================
 void OnSerializationSave(SKSE::SerializationInterface* a_intfc) {
     Manager::GetSingleton()->Save(a_intfc);
@@ -174,13 +174,10 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         Manager::GetSingleton()->LoadCustomSkills();
         Prisma::PreloadLocalization();
         PlayerLevel::Register();
-		//UncapperHooks::Install();
+        Prisma::Install();
 	}
     if (message->type == SKSE::MessagingInterface::kNewGame) {
         ApplyVanillaInitialLevels();
-    }
-    if (message->type == SKSE::MessagingInterface::kPostLoad) {
-        Prisma::Install();
     }
 }
 
@@ -190,7 +187,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     logger::info("Plugin loaded");
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
 
-    // Registra a Serialização no Save (Identificador PRSM)
+    // Registra a SerializaÃ§Ã£o no Save (Identificador PRSM)
     auto serialization = SKSE::GetSerializationInterface();
     serialization->SetUniqueID('NSMV');
     serialization->SetSaveCallback(OnSerializationSave);

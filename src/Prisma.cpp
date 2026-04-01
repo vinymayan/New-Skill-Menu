@@ -12,6 +12,12 @@ static std::vector<std::string> availableLanguagesCache;
 // Variável de controle do menu de level up
 static bool g_isLevelUpMenuOpen = false;
 
+struct CachedTreeData {
+    nlohmann::json data;
+    std::filesystem::file_time_type lastWriteTime;
+};
+static std::unordered_map<std::string, CachedTreeData> g_treeCache;
+
 static void PlayUISound(const char* soundEditorID) {
     auto audioManager = RE::BSAudioManager::GetSingleton();
     if (audioManager) {
@@ -368,6 +374,7 @@ json GetPerkRequirements(RE::BGSPerk* perk) {
         }
 
         json req = json::object();
+
         // 1. GetGlobalValue (Geralmente usado para Nível de Custom Skills)
         if (funcId == 12) {
             if (condItem->data.functionData.params[0]) {
@@ -375,25 +382,19 @@ json GetPerkRequirements(RE::BGSPerk* perk) {
                 if (globalVar) {
                     req["type"] = "level";
                     req["value"] = static_cast<int>(compValue);
-                    //req["globalName"] = globalVar->GetEditorID();
-                    requirements.push_back(req);
                 }
             }
         }
         // 2. GetActorValue (14) ou GetBaseActorValue (277) -> AGORA USA "any_skill"
         else if (funcId == 14 || funcId == 277) {
-            // O parâmetro 0 contém o ID do ActorValue castado para pointer/int
-            // Cuidado: Em algumas versões do CommonLib, o param[0] é void*, precisamos do cast seguro.
             uint64_t paramVal = reinterpret_cast<uint64_t>(condItem->data.functionData.params[0]);
             RE::ActorValue av = static_cast<RE::ActorValue>(paramVal);
 
             std::string skillTarget = GetNameFromActorValue(av);
 
-            req["type"] = "any_skill";   // Mudado de "skill" para "any_skill"
-            req["target"] = skillTarget; // Define explicitamente qual skill é exigida (ex: Block)
+            req["type"] = "any_skill";
+            req["target"] = skillTarget;
             req["value"] = static_cast<int>(compValue);
-
-            requirements.push_back(req);
         }
         // 3. HasPerk (448) -> Requisito de Perk Anterior
         else if (funcId == 448) {
@@ -407,10 +408,9 @@ json GetPerkRequirements(RE::BGSPerk* perk) {
                 req["type"] = "perk";
                 req["value"] = fmt::format("{}|{:X}", plugin, localID);
                 if ((opCode == 0 && compValue == 0.0f) || (opCode == 1 && compValue != 0.0f)) req["isNot"] = true;
-                requirements.push_back(req);
             }
         }
-        // GetQuestCompleted (543)
+        // 4. GetQuestCompleted (543)
         else if (funcId == 543) {
             auto* reqQuest = static_cast<RE::TESQuest*>(condItem->data.functionData.params[0]);
             if (reqQuest) {
@@ -422,10 +422,9 @@ json GetPerkRequirements(RE::BGSPerk* perk) {
                 req["type"] = "quest_completed";
                 req["value"] = fmt::format("{}|{:X}", plugin, localID);
                 if ((opCode == 0 && compValue == 0.0f) || (opCode == 1 && compValue != 0.0f)) req["isNot"] = true;
-                requirements.push_back(req);
             }
         }
-		// HasSpell (264)
+        // 5. HasSpell (264)
         else if (funcId == 264) {
             auto* reqSpell = static_cast<RE::SpellItem*>(condItem->data.functionData.params[0]);
             if (reqSpell) {
@@ -434,14 +433,12 @@ json GetPerkRequirements(RE::BGSPerk* perk) {
                 uint32_t localID = (reqSpell->GetFormID() & 0xFF000000) == 0xFE000000
                     ? (reqSpell->GetFormID() & 0xFFF) : (reqSpell->GetFormID() & 0xFFFFFF);
 
-                json req;
                 req["type"] = "spell";
                 req["value"] = fmt::format("{}|{:X}", plugin, localID);
                 if ((opCode == 0 && compValue == 0.0f) || (opCode == 1 && compValue != 0.0f)) req["isNot"] = true;
-                requirements.push_back(req);
             }
         }
-        // HasShout (378)
+        // 6. HasShout (378)
         else if (funcId == 378) {
             auto* reqShout = static_cast<RE::TESShout*>(condItem->data.functionData.params[0]);
             if (reqShout) {
@@ -450,16 +447,15 @@ json GetPerkRequirements(RE::BGSPerk* perk) {
                 uint32_t localID = (reqShout->GetFormID() & 0xFF000000) == 0xFE000000
                     ? (reqShout->GetFormID() & 0xFFF) : (reqShout->GetFormID() & 0xFFFFFF);
 
-                json req;
                 req["type"] = "shout";
                 req["value"] = fmt::format("{}|{:X}", plugin, localID);
                 if ((opCode == 0 && compValue == 0.0f) || (opCode == 1 && compValue != 0.0f)) req["isNot"] = true;
-                requirements.push_back(req);
             }
         }
 
+        // Único push_back responsável por adicionar o item formatado na lista final
         if (!req.empty()) {
-            req["isOr"] = isOr; 
+            req["isOr"] = isOr;
             requirements.push_back(req);
         }
 
@@ -1440,60 +1436,82 @@ json GetLoadedSkillTreeConfigs() {
         // Vare a pasta raiz e subpastas buscando arquivos .json
         for (const auto& entry : std::filesystem::recursive_directory_iterator(dir)) {
             if (entry.is_regular_file() && entry.path().extension() == ".json") {
-                std::ifstream file(entry.path());
-                if (file.is_open()) {
-                    try {
-                        json tree = json::parse(file);
+                std::string filePath = entry.path().string();
+                std::error_code ec;
+                auto currentWriteTime = std::filesystem::last_write_time(entry.path(), ec);
 
-                        bool isVanilla = tree.value("isVanilla", false);
-                        std::string treeName = tree.value("name", entry.path().stem().string());
+                json tree;
+                bool useCache = false;
 
-                        if (tree.contains("oldLevel")) {
-                            std::string oldLevelStr = tree.value("oldLevel", "");
-                            SyncExternalSkillLevel(treeName, oldLevelStr);
-                        }
+                // 1. Verifica se está no cache e se o arquivo no disco NÃO foi alterado
+                if (g_treeCache.find(filePath) != g_treeCache.end() &&
+                    g_treeCache[filePath].lastWriteTime == currentWriteTime) {
 
-                        tree["name"] = treeName;
-                        tree["isVanilla"] = isVanilla;
-                        if (!tree.contains("color")) tree["color"] = "#ffffff";
-                        if (!tree.contains("initialLevel")) tree["initialLevel"] = 15;
-                        if (!tree.contains("bgPath")) tree["bgPath"] = "";
-                        if (!tree.contains("iconPath")) tree["iconPath"] = "";
-                        if (!tree.contains("selectionIconPath")) tree["selectionIconPath"] = "";
-                        if (!tree.contains("iconPerkPath")) tree["iconPerkPath"] = "";
+                    tree = g_treeCache[filePath].data; // Pega da memória!
+                    useCache = true;
+                }
+                else {
+                    // 2. Cache Miss ou arquivo desatualizado: Lemos do disco
+                    std::ifstream file(entry.path());
+                    if (file.is_open()) {
+                        try {
+                            json tree = json::parse(file);
 
-                        // NOVO: SISTEMA DE CATEGORIAS
-                        std::string category = "Custom";
-                        if (tree.contains("category")) {
-                            category = tree["category"];
-                        }
-                        tree["category"] = category;
+                            bool isVanilla = tree.value("isVanilla", false);
+                            std::string treeName = tree.value("name", entry.path().stem().string());
 
-                        bool isHidden = tree.value("isHidden", false);
-                        tree["isHidden"] = isHidden;
+                            tree["name"] = treeName;
+                            tree["isVanilla"] = isVanilla;
+                            if (!tree.contains("color")) tree["color"] = "#ffffff";
+                            if (!tree.contains("initialLevel")) tree["initialLevel"] = 15;
+                            if (!tree.contains("bgPath")) tree["bgPath"] = "";
+                            if (!tree.contains("iconPath")) tree["iconPath"] = "";
+                            if (!tree.contains("selectionIconPath")) tree["selectionIconPath"] = "";
+                            if (!tree.contains("iconPerkPath")) tree["iconPerkPath"] = "";
 
-                        // Fallbacks para os nodes (perks)
-                        if (!tree.contains("nodes") || !tree["nodes"].is_array() || tree["nodes"].empty()) {
-                            tree["nodes"] = json::array();
-                        }
-                        else {
-                            for (auto& node : tree["nodes"]) {
-                                if (!node.contains("icon")) node["icon"] = "";
-                                if (!node.contains("name")) node["name"] = "Unknown Perk";
-                                if (!node.contains("description")) node["description"] = "";
-                                if (!node.contains("perk")) node["perk"] = "";
-                                if (!node.contains("perkCost")) node["perkCost"] = 1;
-                                if (!node.contains("requirements")) node["requirements"] = json::array();
-                                if (!node.contains("links")) node["links"] = json::array();
+                            // NOVO: SISTEMA DE CATEGORIAS
+                            std::string category = "Custom";
+                            if (tree.contains("category")) {
+                                category = tree["category"];
                             }
+                            tree["category"] = category;
+
+                            bool isHidden = tree.value("isHidden", false);
+                            tree["isHidden"] = isHidden;
+
+                            // Fallbacks para os nodes (perks)
+                            if (!tree.contains("nodes") || !tree["nodes"].is_array() || tree["nodes"].empty()) {
+                                tree["nodes"] = json::array();
+                            }
+                            else {
+                                for (auto& node : tree["nodes"]) {
+                                    if (!node.contains("icon")) node["icon"] = "";
+                                    if (!node.contains("name")) node["name"] = "Unknown Perk";
+                                    if (!node.contains("description")) node["description"] = "";
+                                    if (!node.contains("perk")) node["perk"] = "";
+                                    if (!node.contains("perkCost")) node["perkCost"] = 1;
+                                    if (!node.contains("requirements")) node["requirements"] = json::array();
+                                    if (!node.contains("links")) node["links"] = json::array();
+                                }
+                            }
+                            tree["_originalFilePath"] = filePath;
+
+                            // Salva no cache a base crua para uso futuro
+                            g_treeCache[filePath] = { tree, currentWriteTime };
                         }
-                        tree["_originalFilePath"] = entry.path().string();
-                        trees.push_back(tree);
-                    }
-                    catch (const std::exception& e) {
-                        logger::error("Erro ao ler/processar o JSON {}: {}", entry.path().string(), e.what());
+                        catch (const std::exception& e) {
+                            logger::error("Erro ao ler/processar o JSON {}: {}", filePath, e.what());
+                            continue;
+                        }
                     }
                 }
+
+                if (tree.contains("oldLevel")) {
+                    std::string oldLevelStr = tree.value("oldLevel", "");
+                    SyncExternalSkillLevel(tree.value("name", ""), oldLevelStr);
+                }
+
+                trees.push_back(tree);
             }
         }
     }
@@ -2347,7 +2365,7 @@ static void ChooseAttributeFromUI(const char* args) {
         }
 
         if (giveCW && cwInc > 0.0f) {
-            player->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kCarryWeight, cwInc);
+            player->AsActorValueOwner()->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kPermanent,RE::ActorValue::kCarryWeight, cwInc);
             logger::info("Carry Weight incrementado em {}", cwInc);
         }
 
@@ -2450,18 +2468,15 @@ static void SaveSkillTreesFromUI(const char* jsonArgs) {
             return;
         }
 
-        // Garante que o diretório base das árvores exista
         std::string skillTreesDir = std::string("Data\\PrismaUI\\views\\") + PRODUCT_NAME + "\\Skill Trees";
         if (!std::filesystem::exists(skillTreesDir)) {
             std::filesystem::create_directories(skillTreesDir);
         }
 
-        // Itera sobre as árvores recebidas da UI
         for (auto& tree : incomingTrees) {
             std::string treeName = tree.value("name", "Unknown");
             if (treeName == "Unknown") continue;
 
-            // 1. Limpeza: Removemos campos dinâmicos para não salvar o progresso do jogador no arquivo base
             tree.erase("currentLevel");
             tree.erase("currentProgress");
             tree.erase("cap");
@@ -2477,16 +2492,21 @@ static void SaveSkillTreesFromUI(const char* jsonArgs) {
                 }
             }
 
-            // 2. Salvar: Escreve de volta no arquivo correspondente dentro da subpasta Skill Trees
             std::string defaultPath = skillTreesDir + "\\" + treeName + ".json";
             std::string filePath = tree.value("_originalFilePath", defaultPath);
             tree.erase("_originalFilePath");
             std::ofstream file(filePath);
 
             if (file.is_open()) {
-                // Salva com indentação de 4 espaços para ficar legível
                 file << tree.dump(4);
                 file.close();
+
+                // Atualiza o cache de imediato usando o novo estado que acabou de ser salvo
+                std::error_code ec;
+                auto writeTime = std::filesystem::last_write_time(filePath, ec);
+                tree["_originalFilePath"] = filePath; // Devolve o path para garantir coerência no cache
+                g_treeCache[filePath] = { tree, writeTime };
+
                 logger::info("Skill tree '{}' atualizada e salva com sucesso em {}", treeName, filePath);
             }
             else {
@@ -2698,18 +2718,18 @@ void Prisma::Show() {
             PrismaUI->RegisterJSListener(currentView, "toggleInspector", [](const char*) {
                 // 1. Se ainda não foi criado, cria o Inspector View
                 if (!hasInspectorInitialized) {
-                    
+
                     // CORREÇÃO: Removemos o callback. A função só aceita a 'view'.
                     PrismaUI->CreateInspectorView(view);
-                    
+
                     logger::info("Inspector View criado.");
-                    
+
                     // Executamos a configuração de limites imediatamente após criar
                     // Nota: Verifique se sua API espera Pixels ou Porcentagem.
                     // O cabeçalho pede 'unsigned int' para largura/altura, o que geralmente indica Pixels.
                     // Se a janela ficar muito pequena, mude 50/100 para valores de pixel (ex: 960, 1080).
                     PrismaUI->SetInspectorBounds(view, 50, 0, 800, 800);
-                    
+
                     hasInspectorInitialized = true;
                 }
 
@@ -2719,10 +2739,10 @@ void Prisma::Show() {
                 PrismaUI->SetInspectorVisibility(view, isInspectorVisible);
 
                 logger::debug("Inspector visibility set to: {}", isInspectorVisible);
-            });
+                });
             // Registramos os listeners primeiro
             PrismaUI->RegisterJSListener(currentView, "hideWindow", [](const char*) {
-				logger::debug("Recebida requisicao para fechar o menu Prisma.");
+                logger::debug("Recebida requisicao para fechar o menu Prisma.");
                 auto msgQueue = RE::UIMessageQueue::GetSingleton();
                 if (msgQueue) {
                     msgQueue->AddMessage(RE::StatsMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
@@ -2739,7 +2759,7 @@ void Prisma::Show() {
             PrismaUI->RegisterJSListener(currentView, "legendarySkill", [](const char* args) { LegendarySkillFromUI(args); });
             PrismaUI->RegisterJSListener(currentView, "resetAllPerks", [](const char* args) { ResetAllPerksFromUI(args); });
             PrismaUI->RegisterJSListener(currentView, "requestSkills", [](const char*) {
-                logger::debug("[DEBUG] Chamando SendUpdateToUI via JSListener (requestSkills)"); 
+                logger::debug("[DEBUG] Chamando SendUpdateToUI via JSListener (requestSkills)");
                 SendUpdateToUI();
                 });
             PrismaUI->RegisterJSListener(currentView, "saveSkillTrees", [](const char* args) {
@@ -2783,7 +2803,7 @@ void Prisma::Show() {
 
                     // Força o C++ a reler a pasta e enviar pro UI
                     Manager::GetSingleton()->LoadCustomSkills();
-                    logger::debug("[DEBUG] Chamando SendUpdateToUI via JSListener (createTree)"); 
+                    logger::debug("[DEBUG] Chamando SendUpdateToUI via JSListener (createTree)");
                     SendUpdateToUI();
                 }
                 catch (const std::exception& e) {
@@ -2795,15 +2815,16 @@ void Prisma::Show() {
                     auto j = json::parse(args);
                     std::string treeName = j.value("name", "");
                     if (!treeName.empty()) {
-                        std::filesystem::path treePath = "Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Skill Trees\\" + treeName + ".json";
+                        std::string treePath = "Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Skill Trees\\" + treeName + ".json";
                         if (std::filesystem::exists(treePath)) {
                             std::filesystem::remove(treePath);
                             logger::info("Arvore deletada com sucesso: {}", treeName);
 
-                            // Remove da memória do CustomSkills Framework se for customizada
                             auto mgr = Manager::GetSingleton();
                             mgr->playerCustomSkills.erase(treeName);
                             mgr->customSkillsData.erase(treeName);
+
+                            g_treeCache.erase(treePath);
 
                             SendUpdateToUI();
                         }

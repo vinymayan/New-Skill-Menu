@@ -30,7 +30,7 @@ namespace MenuHooks {
                 Prisma::SendUpdateToUI();
                 //a_this->menuFlags.set(RE::UI_MENU_FLAGS::kFreezeFrameBackground);
                 //a_this->menuFlags.set(RE::UI_MENU_FLAGS::kPausesGame);
-                return RE::UI_MESSAGE_RESULTS::kHandled;
+                //return RE::UI_MESSAGE_RESULTS::kHandled;
 			}
             // Chama a função original para evitar quebrar a pilha de menus da engine
             return result;
