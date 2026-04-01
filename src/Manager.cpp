@@ -9,7 +9,6 @@ void Manager::PopulateAllLists() {
         return race->GetPlayable();
         });
 
-    // Filtro para Perk: Verifica a flag kNonPlayable e o data.playable
     PopulateList<RE::BGSPerk>("Perk", [](RE::BGSPerk* perk) -> bool {
         if ((perk->formFlags & RE::BGSPerk::RecordFlags::kNonPlayable) != 0) return false;
         if (!perk->data.playable) return false;
@@ -29,18 +28,19 @@ void Manager::PopulateAllLists() {
         });
 
     PopulateList<RE::TESFaction>("Faction", [](RE::TESFaction* faction) -> bool {
-        if (faction->IsDeleted() || faction->IsIgnored()) return false;
-        return true;
+        return faction != nullptr;
         });
 
     PopulateList<RE::TESObjectBOOK>("Book", [](RE::TESObjectBOOK* book) -> bool {
-        if (book->IsDeleted() || book->IsIgnored()) return false;
-        return true;
+        return book != nullptr;
         });
 
-    /*PopulateList<RE::TESFaction>("Faction");*/
+    PopulateList<RE::TESShout>("Shout", [](RE::TESShout* shout) -> bool {
+        return shout != nullptr;
+        });
+
+
     /*PopulateList<RE::SpellItem>("Spell");
-    PopulateList<RE::TESShout>("Shout");
     PopulateList<RE::TESNPC>("NPC");
     PopulateList<RE::TESObjectWEAP>("Weapon");
     PopulateList<RE::TESObjectARMO>("Armor");*/

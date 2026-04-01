@@ -1112,7 +1112,7 @@ body {
     letter-spacing: 2px;
 }
 
-    .modal-btn:hover {
+    .modal-btn:hover, .modal-btn.selected-action {
         background: rgba(255,255,255,0.1);
         border-color: white;
         transform: scale(1.05);
@@ -1995,6 +1995,8 @@ body {
     height: 100%;
     position: relative;
     overflow: visible;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 /* ========================================================= */

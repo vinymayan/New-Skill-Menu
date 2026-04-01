@@ -1785,15 +1785,32 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
         return () => window.removeEventListener('click', handleClick);
     }, []);
 
-    const handleWheel = useCallback((e: React.WheelEvent) => {
+    const handleWheel = useCallback((e: any) => {
         e.preventDefault();
-        if (e.ctrlKey) {
-            const zoomDelta = e.deltaY * -0.001;
-            setZoom(prev => Math.min(Math.max(0.5, prev + zoomDelta), 2.5));
-        } else {
-            setPan(prev => ({ x: prev.x, y: prev.y - e.deltaY }));
+        const scaleBy = 1.1;
+        const newScale = e.deltaY < 0 ? zoom * scaleBy : zoom / scaleBy;
+        const clampedScale = Math.max(0.2, Math.min(newScale, 3));
+
+        if (containerRef.current && containerRef.current.parentElement) {
+            const rect = containerRef.current.parentElement.getBoundingClientRect();
+
+
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+
+            const mousePointTo = {
+                x: (mouseX - pan.x) / zoom,
+                y: (mouseY - pan.y) / zoom,
+            };
+
+            setZoom(clampedScale);
+            setPan({
+                x: mouseX - mousePointTo.x * clampedScale,
+                y: mouseY - mousePointTo.y * clampedScale,
+            });
         }
-    }, []);
+    }, [zoom, pan]);
 
     const handleCanvasMouseDown = (e: React.MouseEvent) => {
         const isNodeClick = (e.target as HTMLElement).closest('.perk-node-container');
@@ -2138,7 +2155,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                             style={{
                                 left: `${nodeToShow.x}%`,
                                 top: `${nodeToShow.y}%`,
-                                transform: `translate(-50%, 40px)`,
+                                transform: nodeToShow.y > 60 ? `translate(-50%, calc(-100% - 40px))` : `translate(-50%, 40px)`,
                                 pointerEvents: 'auto'
                             }}
                             onMouseEnter={handleTooltipMouseEnter}

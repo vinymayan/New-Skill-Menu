@@ -1904,6 +1904,13 @@ std::string GetPlayerSkillsJSON() {
                             if (book) isMet = book->IsRead();
                         }
                     }
+                    else if (reqType == "shout") {
+                        RE::FormID shoutID = ParseFormIDString(req.value("value", ""));
+                        if (shoutID != 0) {
+                            auto shout = RE::TESForm::LookupByID<RE::TESShout>(shoutID);
+                            if (shout) isMet = player->HasShout(shout);
+                        }
+                    }
                     else isMet = true; // Fallback
                     if (req.value("isNot", false)) isMet = !isMet;
                     req["isMet"] = isMet;
@@ -1971,6 +1978,13 @@ std::string GetPlayerSkillsJSON() {
                                 if (bookID != 0) {
                                     auto book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookID);
                                     if (book) isMet = book->IsRead();
+                                }
+                            }
+                            else if (reqType == "shout") {
+                                RE::FormID shoutID = ParseFormIDString(req.value("value", ""));
+                                if (shoutID != 0) {
+                                    auto shout = RE::TESForm::LookupByID<RE::TESShout>(shoutID);
+                                    if (shout) isMet = player->HasShout(shout);
                                 }
                             }
                             else isMet = true;
@@ -2073,6 +2087,13 @@ std::string GetPlayerSkillsJSON() {
                                         if (bookID != 0) {
                                             auto book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookID);
                                             if (book) isMet = book->IsRead();
+                                        }
+                                    }
+                                    else if (reqType == "shout") {
+                                        RE::FormID shoutID = ParseFormIDString(req.value("value", ""));
+                                        if (shoutID != 0) {
+                                            auto shout = RE::TESForm::LookupByID<RE::TESShout>(shoutID);
+                                            if (shout) isMet = player->HasShout(shout);
                                         }
                                     }
                                     else isMet = true;
@@ -2222,6 +2243,21 @@ std::string GetPlayerSkillsJSON() {
                 });
         }
 
+        json availableShouts = json::array();
+        for (const auto& shout : Manager::GetSingleton()->GetList("Shout")) {
+            uint32_t localID = (shout.formID & 0xFF000000) == 0xFE000000 ? (shout.formID & 0xFFF) : (shout.formID & 0xFFFFFF);
+
+            std::string shoutName = shout.name;
+            if (shoutName.empty()) shoutName = shout.editorID;
+            if (shoutName.empty()) shoutName = fmt::format("{:X}", shout.formID);
+
+            availableShouts.push_back({
+                {"id", fmt::format("{}|{:X}", shout.pluginName, localID)},
+                {"name", shoutName},
+                {"editorId", shout.editorID}
+                });
+        }
+
         json availableReqs = json::array({
             //{{"id", "level"}, {"name", "Skill Level (Atual)"}},
             {{"id", "player_level"}, {"name", "Player Level"}},
@@ -2231,6 +2267,7 @@ std::string GetPlayerSkillsJSON() {
             {{"id", "location_cleared"}, {"name", "Location Cleared"}, {"isForm", true}},
             {{"id", "faction"}, {"name", "In Faction"}, {"isForm", true}},
             {{"id", "book_read"}, {"name", "Book Read"}, {"isForm", true}},
+            {{"id", "shout"}, {"name", "Has Shout"}, {"isForm", true}},
             {{"id", "spell"}, {"name", "Has Spell"}, {"isForm", true}},
             {{"id", "is_vampire"}, {"name", "Must be Vampire"}},
             {{"id", "is_werewolf"}, {"name", "Must be Werewolf"}},
@@ -2250,6 +2287,7 @@ std::string GetPlayerSkillsJSON() {
         formLists["location_cleared"] = availableLocations;
         formLists["faction"] = availableFactions;
         formLists["book_read"] = availableBooks;
+        formLists["shout"] = availableShouts;
 
         json finalResponse = {
             {"player", playerData},
@@ -2269,7 +2307,7 @@ std::string GetPlayerSkillsJSON() {
 
     }
     catch (const std::exception& e) {
-        logger::error("ERRO CRÍTICO em GetPlayerSkillsJSON: {}", e.what());
+        logger::error("ERRO CRÍTICO aqui o GetPlayerSkillsJSON: {}", e.what());
         return "{\"player\":null, \"trees\":[]}";
     }
 }
