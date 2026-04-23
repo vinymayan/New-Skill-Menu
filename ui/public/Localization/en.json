@@ -31,7 +31,9 @@
     "select_magic_school": "Select School...",
     "search_short": "Search...",
     "has": "HAS",
-    "not": "NOT"
+    "not": "NOT",
+    "warning": "Warning",
+    "cw": "CW"
   },
   "header": {
     "name": "NAME",
@@ -192,13 +194,15 @@
     "choose_attr": "CHOOSE ATTRIBUTE",
     "confirm_btn": "CONFIRM LEVEL UP",
     "cap_reached": "Skill Cap Reached",
-    "cw_bonus_tooltip": "+{amount} Carry Weight"
+    "cw_bonus_tooltip": "+{amount} Carry Weight",
+    "select_attributes": "SELECT ATTRIBUTES"
   },
   "unlock_perk": {
     "title": "UNLOCK PERK",
     "message": "Do you want to spend {cost} perk point{plural} to unlock {perkName}?",
     "cost_tag": "Cost: {cost} Point(s)",
-    "acquired": "ACQUIRED"
+    "acquired": "ACQUIRED",
+    "insufficient_points": "You do not have enough skill points to unlock this Perk."
   },
   "ui_options": {
     "title": "INTERFACE SETTINGS",

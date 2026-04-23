@@ -11,6 +11,7 @@ static std::map<std::string, json> localizationCache;
 static std::vector<std::string> availableLanguagesCache;
 // Variável de controle do menu de level up
 static bool g_isLevelUpMenuOpen = false;
+static int g_pendingLevelUps = 0;
 
 struct CachedTreeData {
     json data;
@@ -1615,6 +1616,14 @@ std::string GetPlayerSkillsJSON() {
         auto player = RE::PlayerCharacter::GetSingleton();
         if (!player || !player->Is3DLoaded()) return "{\"player\":null, \"trees\":[]}";
 
+        auto playerSkills = player->GetPlayerRuntimeData().skills;
+        if (playerSkills) {
+            while (playerSkills->CanLevelUp()) {
+                playerSkills->AdvanceLevel(false);
+                g_pendingLevelUps++;
+            }
+        }
+
         // --- 1. DADOS BÁSICOS DO JOGADOR (HEADER) ---
         std::string playerName = player->GetName();
         auto avOwner = player->AsActorValueOwner();
@@ -1629,7 +1638,6 @@ std::string GetPlayerSkillsJSON() {
         int playerLevel = player->GetLevel();
         int dragonSouls = static_cast<int>(avOwner->GetActorValue(RE::ActorValue::kDragonSouls));
         bool hasPendingLevelUp = false;
-        auto playerSkills = player->GetPlayerRuntimeData().skills;
         float playerLevelProgress = 0.0f;
 
         json currentEffSettings = GetEffectiveSettings(playerLevel);
@@ -1665,7 +1673,7 @@ std::string GetPlayerSkillsJSON() {
             {"race", raceName},
             {"dragonSouls", dragonSouls},
             {"title", "Dragonborn"},
-            {"pendingLevelUp", hasPendingLevelUp},
+            {"pendingLevelUps", g_pendingLevelUps},
             {"isLevelUpMenuOpen", Prisma::IsLevelUpMenuOpen()}
         };
 
@@ -2427,117 +2435,109 @@ static void UnlockPerkFromUI(const char* args) {
 static void ChooseAttributeFromUI(const char* args) {
     if (!args) return;
     try {
-        // Agora recebemos um JSON complexo da UI
         json payload = json::parse(args);
-        std::string attribute = payload.value("attribute", "");
+        json levelUpsArray = payload.value("levelUps", json::array());
         json skillsMap = payload.value("skills", json::object());
 
         auto player = RE::PlayerCharacter::GetSingleton();
         if (!player) return;
-        
-        int currentLevel = player->GetLevel();
-        int targetLevel = currentLevel + 1;
-        logger::info("[Prisma] Iniciando processo de Level Up para o level {}", targetLevel);
-        // Pega as configurações EFETIVAS para esse nível alcançado
-        json effSettings = GetEffectiveSettings(targetLevel);
-        bool refillAttributes = effSettings.value("refillAttributesOnLevelUp", false);
-        float healthInc = effSettings.value("healthIncrease", 10.0f);
-        float magickaInc = effSettings.value("magickaIncrease", 10.0f);
-        float staminaInc = effSettings.value("staminaIncrease", 10.0f);
-        int perksPerLevel = effSettings.value("perksPerLevel", 1);
 
-        // 1. Aplica o Atributo
-        if (attribute == "Health") player->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kHealth, healthInc);
-        else if (attribute == "Magicka") player->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kMagicka, magickaInc);
-        else if (attribute == "Stamina") player->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kStamina, staminaInc);
+        int totalExtraPerks = 0;
+        logger::info("[Prisma] Processando {} level ups em lote.", levelUpsArray.size());
 
-        float cwInc = effSettings.value("carryWeightIncrease", 0.0f);
-        std::string cwMethod = effSettings.value("carryWeightMethod", "none");
-        bool giveCW = false;
+        // 1. Processa Atributos para cada nível pendente escolhido
+        for (auto& lvlUp : levelUpsArray) {
+            int lvl = lvlUp.value("level", 0);
+            std::string attribute = lvlUp.value("attribute", "");
+            auto playerBase = player->GetActorBase();
+            if (playerBase) {
+                playerBase->actorData.level += 1;
+                logger::info("Player subiu de nivel! Novo nivel: {}", playerBase->actorData.level);
+            }
+            // Pega as configurações EFETIVAS baseadas na regra daquele respectivo nível
+            json effSettings = GetEffectiveSettings(lvl);
+            float healthInc = effSettings.value("healthIncrease", 10.0f);
+            float magickaInc = effSettings.value("magickaIncrease", 10.0f);
+            float staminaInc = effSettings.value("staminaIncrease", 10.0f);
+            int perksPerLevel = effSettings.value("perksPerLevel", 1);
+            bool refillAttributes = effSettings.value("refillAttributesOnLevelUp", false);
 
-        if (cwMethod == "auto") {
-            giveCW = true;
-        }
-        else if (cwMethod == "linked") {
-            auto linkedAttrs = effSettings.value("carryWeightLinkedAttributes", json::array());
-            for (auto& attr : linkedAttrs) {
-                if (attr == attribute) {
-                    giveCW = true;
-                    break;
+            if (attribute == "Health") player->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kHealth, healthInc);
+            else if (attribute == "Magicka") player->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kMagicka, magickaInc);
+            else if (attribute == "Stamina") player->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kStamina, staminaInc);
+
+            float cwInc = effSettings.value("carryWeightIncrease", 0.0f);
+            std::string cwMethod = effSettings.value("carryWeightMethod", "none");
+            bool giveCW = false;
+
+            if (cwMethod == "auto") {
+                giveCW = true;
+            }
+            else if (cwMethod == "linked") {
+                auto linkedAttrs = effSettings.value("carryWeightLinkedAttributes", json::array());
+                for (auto& attr : linkedAttrs) {
+                    if (attr == attribute) {
+                        giveCW = true;
+                        break;
+                    }
                 }
             }
+
+            if (giveCW && cwInc > 0.0f) {
+                player->AsActorValueOwner()->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kPermanent, RE::ActorValue::kCarryWeight, cwInc);
+                logger::info("Carry Weight incrementado em {} para o Nivel {}", cwInc, lvl);
+            }
+
+            if (refillAttributes) {
+                player->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kHealth, 999999.0f);
+                player->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kMagicka, 999999.0f);
+                player->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kStamina, 999999.0f);
+            }
+
+            totalExtraPerks += (perksPerLevel - 1);
         }
 
-        if (giveCW && cwInc > 0.0f) {
-            player->AsActorValueOwner()->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kPermanent,RE::ActorValue::kCarryWeight, cwInc);
-            logger::info("Carry Weight incrementado em {}", cwInc);
-        }
-
-        if (refillAttributes) {
-            // kDamage é o modificador que o Skyrim usa para "dano recebido". 
-            // Restaurar 99999 remove todo o dano, enchendo a barra.
-            player->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kHealth, 999999.0f);
-            player->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kMagicka, 999999.0f);
-            player->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kStamina, 999999.0f);
-        }
-
-        // 2. Aplica as Skills Escolhidas (Sobe de nível!)
+        // 2. Aplica as Skills Escolhidas (Agrupadas)
         for (auto& [skillName, amountVal] : skillsMap.items()) {
             int amount = amountVal.get<int>();
             if (amount > 0) {
                 RE::ActorValue av = GetActorValueFromName(skillName);
                 if (av != RE::ActorValue::kNone) {
-                    // É Vanilla: Sobe o nível via Engine nativa
                     player->AsActorValueOwner()->ModBaseActorValue(av, static_cast<float>(amount));
                 }
                 else {
-                    // É Custom Skill: Modifica pelo nosso Manager
                     auto mgr = Manager::GetSingleton();
                     if (mgr->playerCustomSkills.find(skillName) != mgr->playerCustomSkills.end()) {
                         mgr->playerCustomSkills[skillName].currentLevel += amount;
-                        // Opcional: Zera a barra de XP atual para essa skill se subir pelo UI de stats?
-                        // mgr->playerCustomSkills[skillName].currentXP = 0.0f;
                     }
                 }
             }
         }
 
-        // 3. Processa o Level Up e Perks Extras
-        auto playerSkills = player->GetPlayerRuntimeData().skills;
-        if (playerSkills) {
-            playerSkills->AdvanceLevel(false);
-        }
-
-        if (perksPerLevel != 1) {
-            // Matemática segura e cast explícito para uint8_t (limite 0-255)
-            int extraPerks = perksPerLevel - 1;
+        // 3. Compensa os Perk Points finais (soma/subtrai as regras efetivas dos níveis agrupados)
+        if (totalExtraPerks != 0) {
             int currentPerks = static_cast<int>(player->GetPlayerRuntimeData().perkCount);
-            int newPerkCount = currentPerks + extraPerks;
-            
+            int newPerkCount = currentPerks + totalExtraPerks;
+
             // Trava o valor entre 0 e 255 para evitar underflow/overflow da engine do Skyrim
             newPerkCount = std::clamp(newPerkCount, 0, 255);
-            
             player->GetPlayerRuntimeData().perkCount = static_cast<uint8_t>(newPerkCount);
         }
 
-        /*auto eventSource = RE::LevelIncrease::GetEventSource();
-        if (eventSource) {
-            RE::LevelIncrease::Event e{ player, (uint16_t)player->GetLevel() };
-            eventSource->SendEvent(&e);
-        }*/
+        // Limpa as pendências já processadas
+        g_pendingLevelUps -= levelUpsArray.size();
+        if (g_pendingLevelUps < 0) g_pendingLevelUps = 0;
 
-        logger::info("Level Up processado para: {}. Skills incrementadas: {}", attribute, skillsMap.dump());
         auto msgQueue = RE::UIMessageQueue::GetSingleton();
         if (msgQueue) {
             msgQueue->AddMessage(RE::LevelUpMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
         }
 
-                Prisma::SendUpdateToUI();
-
-        logger::info("[Prisma] ChooseAttributeFromUI finalizado com sucesso e UI atualizada.");
+        Prisma::SendUpdateToUI();
+        logger::info("[Prisma] Level Up Batch processado com sucesso. Restam {} level ups pendentes.", g_pendingLevelUps);
     }
     catch (const std::exception& e) {
-        logger::error("Erro ao aplicar level up complexo: {}", e.what());
+        logger::error("Erro ao aplicar level up em lote: {}", e.what());
     }
 }
 
@@ -2840,11 +2840,7 @@ void Prisma::Show() {
             // Registramos os listeners primeiro
             PrismaUI->RegisterJSListener(currentView, "hideWindow", [](const char*) {
                 logger::debug("Recebida requisicao para fechar o menu Prisma.");
-                auto msgQueue = RE::UIMessageQueue::GetSingleton();
-                if (msgQueue) {
-                    msgQueue->AddMessage(RE::StatsMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
-                    msgQueue->AddMessage(RE::LevelUpMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr); // Garante o fechamento de ambos
-                }
+				Prisma::Hide();
                 });
             PrismaUI->RegisterJSListener(currentView, "exportTree", [](const char* args) { ExportTreeFromUI(args); });
             PrismaUI->RegisterJSListener(currentView, "requestLocalization", [](const char* args) {
@@ -2983,10 +2979,6 @@ void Prisma::Show() {
             PrismaUI->RegisterJSListener(currentView, "saveUISettings", [](const char* args) { SaveUISettingsFromUI(args); });
             SendUpdateToUI();
             PrismaUI->Focus(currentView, true);
-            /*auto msgQueue = RE::UIMessageQueue::GetSingleton();
-            if (msgQueue) {
-                msgQueue->AddMessage(RE::LevelUpMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
-            }*/
             });
     }
     else {
@@ -2998,6 +2990,7 @@ void Prisma::Show() {
 
     //RE::UIBlurManager::GetSingleton()->IncrementBlurCount();
     isVisible = true;
+   
 }
 
 void Prisma::TriggerExitAnimation() {
@@ -3023,6 +3016,13 @@ void Prisma::Hide() {
         PrismaUI->Hide(view);
        //RE::UIBlurManager::GetSingleton()->DecrementBlurCount();
         isVisible = false;
+        auto ui = RE::UI::GetSingleton();
+        if (ui) {
+            auto focusMenu = ui->GetMenu("PrismaUI_FocusMenu");
+            if (focusMenu) {
+                focusMenu->menuFlags.reset(RE::UI_MENU_FLAGS::kFreezeFrameBackground);
+            }
+        }
     }
 }
 

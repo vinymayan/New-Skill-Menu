@@ -167,6 +167,7 @@ void OnSerializationRevert(SKSE::SerializationInterface* a_intfc) {
 
 extern void GenerateAllVanillaTrees();
 
+
 void OnMessage(SKSE::MessagingInterface::Message* message) {
     if (message->type == SKSE::MessagingInterface::kDataLoaded) {
         Manager::GetSingleton()->PopulateAllLists();

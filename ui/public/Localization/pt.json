@@ -31,7 +31,9 @@
     "select_magic_school": "Escola de Magia...",
     "search_short": "Pesquisar...",
     "has": "TEM",
-    "not": "NÃO"
+    "not": "NÃO",
+    "warning": "Aviso",
+    "cw": "Carga"
   },
   "header": {
     "name": "NOME",
@@ -192,13 +194,15 @@
     "choose_attr": "ESCOLHER ATRIBUTO",
     "confirm_btn": "CONFIRMAR",
     "cap_reached": "Limite Atingido",
-    "cw_bonus_tooltip": "+{amount} de Carga"
+    "cw_bonus_tooltip": "+{amount} de Carga",
+    "select_attributes": "SELECIONE OS ATRIBUTOS"
   },
   "unlock_perk": {
     "title": "DESBLOQUEAR PERK",
     "message": "Gastar {cost} ponto{plural} para desbloquear {perkName}?",
     "cost_tag": "Custo: {cost} Ponto(s)",
-    "acquired": "ADQUIRIDO"
+    "acquired": "ADQUIRIDO",
+    "insufficient_points": "Você não possui pontos de habilidade suficientes para desbloquear este Perk."
   },
   "ui_options": {
     "title": "CONFIGURAÇÕES DE INTERFACE",

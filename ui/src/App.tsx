@@ -81,7 +81,7 @@ interface PlayerData {
     title?: string;
     race?: string;
     dragonSouls?: number;
-    pendingLevelUp?: boolean;
+    pendingLevelUps?: number;
     isLevelUpMenuOpen?: boolean;
 }
 interface LevelRule {
@@ -904,41 +904,61 @@ const TreeEditorModal = ({ tree, settings, availableReqs, availableTrees, formLi
 
 const svgContentCache: Record<string, string> = {};
 
-// OTIMIZAÇÃO: "pointerEvents: 'none'" para que SVGs inline não dispersem eventos no hit-tester
+// OTIMIZAÇÃO: Carregamento do SVG e injeção do HTML nativo para manter propriedades CSS.
 const InlineSVGIcon = memo(({ src, className, alt }: { src: string, className?: string, alt?: string }) => {
     const [svgContent, setSvgContent] = useState<string | null>(svgContentCache[src] || null);
 
     useEffect(() => {
-        if (!src || !src.toLowerCase().includes('.svg') || svgContentCache[src]) return;
-
+        if (!src) return;
         let isMounted = true;
+
+        if (svgContentCache[src]) {
+            setSvgContent(svgContentCache[src]);
+            return;
+        }
+
         fetch(src)
             .then(res => res.text())
-            .then(text => {
-                if (isMounted && text.includes('<svg')) {
-                    svgContentCache[src] = text;
-                    setSvgContent(text);
+            .then(data => {
+                if (!isMounted) return;
+                let finalContent = data;
+
+                if (data.includes('<svg')) {
+                    // MÁGICA AQUI: Remove width e height travados no arquivo SVG original
+                    finalContent = data.replace(/(<svg[^>]*?)\s+width=(["']).*?\2/i, '$1')
+                        .replace(/(<svg[^>]*?)\s+height=(["']).*?\2/i, '$1');
+                    svgContentCache[src] = finalContent;
+                } else {
+                    // Fallback para PNG/JPG 
+                    finalContent = `<img src="${src}" alt="${alt || ''}" style="width: 100%; height: 100%; object-fit: contain; pointer-events: none;" />`;
+                    svgContentCache[src] = finalContent;
                 }
+
+                setSvgContent(finalContent);
             })
-            .catch(err => console.error("Erro ao carregar SVG:", src, err));
+            .catch(err => {
+                if (isMounted) {
+                    const fallback = `<img src="${src}" alt="${alt || ''}" style="width: 100%; height: 100%; object-fit: contain; pointer-events: none;" />`;
+                    svgContentCache[src] = fallback;
+                    setSvgContent(fallback);
+                }
+            });
 
-        return () => { isMounted = false; };
-    }, [src]);
+        return () => {
+            isMounted = false;
+        };
+    }, [src, alt]);
 
-    if (!src) return null;
+    if (!svgContent) return null;
 
-    if (src.toLowerCase().includes('.svg') && svgContent) {
-        return (
-            <div
-                className={`${className} inline-svg-wrapper`}
-                dangerouslySetInnerHTML={{ __html: svgContent }}
-                title={alt}
-                style={{ pointerEvents: 'none' }}
-            />
-        );
-    }
-
-    return <img src={src} className={className} alt={alt} style={{ pointerEvents: 'none' }} />;
+    return (
+        <div
+            className={`inline-svg-wrapper ${className || ''}`}
+            dangerouslySetInnerHTML={{ __html: svgContent }}
+            // Força a caixa do HTML injetado a respeitar o CSS Pai (perk-icon-img)
+            style={{ pointerEvents: 'none', width: '100%', height: '100%', display: 'flex' }}
+        />
+    );
 });
 
 const PlayerHeader = ({ player }: { player: PlayerData }) => {
@@ -1020,7 +1040,6 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
     hidePerkNames?: boolean
 }) => {
     const groupRef = useRef<Konva.Group>(null);
-    // Nova referência necessária para poder colorir o ícone sem bugar as sombras do Canvas
     const iconGroupRef = useRef<Konva.Group>(null);
 
     // Calcula posições em PIXELS baseados na porcentagem
@@ -1037,8 +1056,6 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
         if (!node.nextRanks || node.nextRanks.length === 0) return true;
         return node.nextRanks.every(rank => rank.isUnlocked);
     }, [node]);
-
-
 
     let iconOpacity = 0.5;
 
@@ -1060,6 +1077,8 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
 
         const nodeGroup = groupRef.current;
         if (nodeGroup) {
+            // Removemos o cache temporariamente para a animação da sombra fluir sem cortes
+            nodeGroup.clearCache();
             nodeGroup.moveToTop();
             nodeGroup.to({
                 scaleX: 1.3,
@@ -1084,16 +1103,42 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
                 duration: 0.2,
                 easing: Konva.Easings.EaseOut,
                 shadowBlur: node.isUnlocked ? 10 : 0,
-                shadowOpacity: 0.6
+                shadowOpacity: 0.6,
+                onFinish: () => {
+                    // Reaplica o cache ao fim da animação
+                    if (image && nodeGroup) {
+                        nodeGroup.cache({ pixelRatio: 2, padding: 20 });
+                    }
+                }
             });
         }
     };
 
-    // Aplica o cache inicial. O Konva precisa do cache ativado para pintar o SVG usando source-in corretamente.
+    // Aplica o cache inicial seguindo a lógica de Entrada/Saída
     useEffect(() => {
-        if (iconGroupRef.current) iconGroupRef.current.cache();
-        if (groupRef.current) groupRef.current.cache();
-    }, [image, isMaxed, node.isUnlocked]);
+        // "deixe os svgs já carregados": Só ativa o cache se a imagem existir e estiver pronta
+        if (!image) return;
+
+        const iconNode = iconGroupRef.current;
+        const groupNode = groupRef.current;
+
+        // "adicione cache na entrada"
+        if (iconNode) {
+            iconNode.clearCache();
+            iconNode.cache({ pixelRatio: 2, padding: 10 });
+        }
+        if (groupNode) {
+            groupNode.clearCache();
+            // O padding de 20 é fundamental para não cortar o Blur da sombra e gerar blocos cinzas
+            groupNode.cache({ pixelRatio: 2, padding: 20 });
+        }
+
+        // "remova o cache na saída"
+        return () => {
+            if (iconNode) iconNode.clearCache();
+            if (groupNode) groupNode.clearCache();
+        };
+    }, [image, isMaxed, node.isUnlocked, treeColor]);
 
     return (
         <Group
@@ -1107,15 +1152,16 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
                 onNodeClick?.(node);
             }}
         >
-            {/* 1. RESTAURAMOS A COR DE FUNDO E BORDA AQUI */}
+            {/* O fill="transparent" assegura que a sombra saiba de onde está sendo projetada sem bugar no cache */}
             <Circle
                 radius={nodeSize / 2}
+                fill="transparent"
                 shadowColor={treeColor}
                 shadowBlur={node.isUnlocked ? 20 : 0}
                 shadowOpacity={node.isUnlocked ? 0.6 : 0}
             />
 
-            {/* 2. TRUQUE DO KONVA PARA COLORIR O SVG */}
+            {/* TRUQUE DO KONVA PARA COLORIR O SVG */}
             {image && (
                 <Group ref={iconGroupRef} x={-iconSize / 2} y={-iconSize / 2}>
                     <KonvaImage
@@ -1135,23 +1181,6 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
                     )}
                 </Group>
             )}
-
-            {/*{!hidePerkNames && (*/}
-            {/*    <KonvaText*/}
-            {/*        text={node.name.toUpperCase()}*/}
-            {/*        y={25}*/}
-            {/*        fontSize={14}*/}
-            {/*        fontFamily="Sovngarde"*/}
-            {/*        fill="white"*/}
-            {/*        align="center"*/}
-            {/*        width={200}*/}
-            {/*        x={-100}*/}
-            {/*        shadowColor="black"*/}
-            {/*        shadowBlur={2}*/}
-            {/*        opacity={node.isUnlocked || node.canUnlock ? 1 : 0.6}*/}
-            {/*        listening={false}*/}
-            {/*    />*/}
-            {/*)}*/}
         </Group>
     );
 });
@@ -1786,6 +1815,9 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
     }, []);
 
     const handleWheel = useCallback((e: any) => {
+        if ((e.target as HTMLElement).closest('.perk-tooltip')) {
+            return;
+        }
         e.preventDefault();
         const scaleBy = 1.1;
         const newScale = e.deltaY < 0 ? zoom * scaleBy : zoom / scaleBy;
@@ -2235,15 +2267,16 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
 
 const SkillTreeDetail = ({
     trees, initialSkillName, isEditorMode, uiSettings, globalSettings, formLists, availableReqs, availableTrees, onRequestBrowse,
-    onUpdateNodePosition, onUpdateNodes, onClose, onNodeClick, onTreeContextMenu, onLegendary
+    onUpdateNodePosition, onUpdateNodes, onClose, onNodeClick, onTreeContextMenu, onLegendary, onSlideChange 
 }: {
-        trees: SkillTreeData[], initialSkillName: string, isEditorMode: boolean, globalSettings: SettingsData | null, formLists?: Record<string, AvailablePerk[]>, availableReqs: RequirementDef[], availableTrees: string[], onRequestBrowse: (field: string) => void,
+    trees: SkillTreeData[], initialSkillName: string, isEditorMode: boolean, globalSettings: SettingsData | null, formLists?: Record<string, AvailablePerk[]>, availableReqs: RequirementDef[], availableTrees: string[], onRequestBrowse: (field: string) => void,
     onUpdateNodePosition: (t: string, n: string, x: number, y: number) => void,
     onUpdateNodes?: (t: string, nodes: PerkNode[]) => void,
     uiSettings: UISettings | null,
     onClose: (name?: string) => void, onNodeClick?: (node: PerkNode) => void,
     onTreeContextMenu: (e: React.MouseEvent, name: string) => void,
-    onLegendary: (treeName: string) => void
+    onLegendary: (treeName: string) => void,
+    onSlideChange: (name: string) => void 
 }) => {
     const initialIndex = useMemo(() => Math.max(0, trees.findIndex(t => t.name === initialSkillName)), [trees, initialSkillName]);
     const [currentIndex, setCurrentIndex] = useState(initialIndex);
@@ -2269,12 +2302,14 @@ const SkillTreeDetail = ({
     useEffect(() => {
         if (!emblaApi) return;
         const onSelect = () => {
-            setCurrentIndex(emblaApi.selectedScrollSnap());
+            const newIndex = emblaApi.selectedScrollSnap();
+            setCurrentIndex(newIndex);
             setKeyboardNodeId(null);
+            onSlideChange(trees[newIndex].name); 
         };
         emblaApi.on('select', onSelect);
         return () => { emblaApi.off('select', onSelect); };
-    }, [emblaApi]);
+    }, [emblaApi, trees, onSlideChange]);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -2667,31 +2702,58 @@ const BottomSkillGrid = ({ trees, uiSettings, onHoverSkill, onClickSkill, onCont
     );
 };
 
-const LevelUpModal = ({ trees, settings, rules, targetLevel, onSelect }: {
+const LevelUpModal = ({ trees, settings, rules, currentLevel, pendingLevelUps, onSelect }: {
     trees: SkillTreeData[], settings: SettingsData,
     rules: LevelRule[],
-    targetLevel: number, onSelect: (payload: any) => void
+    currentLevel: number, pendingLevelUps: number, onSelect: (payload: any) => void
 }) => {
     const [allocations, setAllocations] = useState<Record<string, number>>({});
-    const [selectedAttribute, setSelectedAttribute] = useState<string | null>(null);
+    const [selectedAttributes, setSelectedAttributes] = useState<Record<number, string>>({});
     const [activeCategory, setActiveCategory] = useState<string>("All");
-
-    const effSettings = getEffectiveSettings(settings, rules, targetLevel);
-
     const [isProcessing, setIsProcessing] = useState(false);
+
     const categories = settings?.categories || ["All", "Combat", "Magic", "Stealth", "Special", "Custom"];
 
+    // Calcula os níveis a serem processados e soma os recursos
+    const { levelsToProcess, totalSkillPoints, totalMaxSpendable, currentCapEffective } = useMemo(() => {
+        const processList = [];
+        let skillPts = 0;
+        let maxSpend = 0;
+        let maxCap = 100;
+
+        // O currentLevel recebido do C++ é o nível ANTES do level up (ex: Level 1).
+        // Se temos 6 níveis pendentes, devemos processar os leveis 2, 3, 4, 5, 6 e 7.
+        const startLevel = currentLevel + 1;
+        const endLevel = currentLevel + pendingLevelUps;
+
+        for (let l = startLevel; l <= endLevel; l++) {
+            const eff = getEffectiveSettings(settings, rules, l);
+            processList.push({ level: l, eff });
+            skillPts += eff.skillPointsPerLevel || 0;
+            maxSpend += eff.maxSkillPointsSpendablePerLevel || 0;
+            if ((eff.skillCap || 100) > maxCap) maxCap = eff.skillCap || 100;
+        }
+
+        // Para as regras de cap e afins baseadas no level atual do player
+        const currentEff = getEffectiveSettings(settings, rules, currentLevel);
+
+        return {
+            levelsToProcess: processList,
+            totalSkillPoints: skillPts,
+            totalMaxSpendable: maxSpend,
+            currentCapEffective: currentEff
+        };
+    }, [currentLevel, pendingLevelUps, settings, rules]);
+
     const totalSpent = Object.values(allocations).reduce((a, b) => a + b, 0);
-    const pointsAvailable = effSettings.skillPointsPerLevel;
-    const maxAllowed = Math.min(pointsAvailable, effSettings.maxSkillPointsSpendablePerLevel);
+    const maxAllowed = Math.min(totalSkillPoints, totalMaxSpendable);
     const pointsRemaining = maxAllowed - totalSpent;
 
     const addPoint = (tree: SkillTreeData) => {
         const skillName = tree.name;
         const current = tree.currentLevel;
         const allocated = allocations[skillName] || 0;
-
-        const cap = tree.cap || effSettings.skillCap || 100;
+        const cap = tree.cap || currentCapEffective.skillCap || 100;
 
         if (pointsRemaining > 0 && (current + allocated < cap)) {
             setAllocations(prev => ({ ...prev, [skillName]: (prev[skillName] || 0) + 1 }));
@@ -2704,12 +2766,17 @@ const LevelUpModal = ({ trees, settings, rules, targetLevel, onSelect }: {
         }
     };
 
+    const canConfirm = levelsToProcess.every(l => selectedAttributes[l.level]);
+
     const handleConfirm = () => {
-        if (!selectedAttribute || isProcessing) return;
+        if (!canConfirm || isProcessing) return;
 
         setIsProcessing(true);
         onSelect({
-            attribute: selectedAttribute,
+            levelUps: levelsToProcess.map(l => ({
+                level: l.level,
+                attribute: selectedAttributes[l.level]
+            })),
             skills: allocations
         });
     };
@@ -2724,11 +2791,13 @@ const LevelUpModal = ({ trees, settings, rules, targetLevel, onSelect }: {
 
     return (
         <div className="skyrim-modal-overlay" style={{ zIndex: 5000 }}>
-            <div className="skyrim-modal-content level-up-modal-advanced">
-                <h2>{t('level_up.title')}</h2>
+            <div className="skyrim-modal-content level-up-modal-advanced" style={{ minWidth: '600px' }}>
+                <h2>{t('level_up.title')} <span style={{ fontSize: '1rem', color: '#ffd700' }}>({pendingLevelUps} Níveis)</span></h2>
                 <div className="tooltip-divider" style={{ width: '100%', marginBottom: '20px' }}></div>
 
-                <div className="level-up-layout">
+                <div className="level-up-layout" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+
+                    {/* ESQUERDA: Distribuição de Skills (Pooled) */}
                     <div className="skill-allocation-section">
                         <h3>{t('level_up.allocate', { points: pointsRemaining })}</h3>
 
@@ -2744,10 +2813,10 @@ const LevelUpModal = ({ trees, settings, rules, targetLevel, onSelect }: {
                             ))}
                         </div>
 
-                        <div className="allocation-list-grid">
+                        <div className="allocation-list-grid" style={{ maxHeight: '300px', overflowY: 'auto' }}>
                             {filteredTrees.map(tree => {
                                 const allocated = allocations[tree.name] || 0;
-                                const cap = tree.cap || effSettings.skillCap || 100;
+                                const cap = tree.cap || currentCapEffective.skillCap || 100;
                                 const isCapped = (tree.currentLevel + allocated) >= cap;
 
                                 return (
@@ -2778,33 +2847,43 @@ const LevelUpModal = ({ trees, settings, rules, targetLevel, onSelect }: {
                         </div>
                     </div>
 
-                    <div className="level-up-options-row">
-                        {['Health', 'Magicka', 'Stamina'].map(attr => {
-                            const isSelected = selectedAttribute === attr;
-                            const incValue = attr === 'Health' ? effSettings.healthIncrease : attr === 'Magicka' ? effSettings.magickaIncrease : effSettings.staminaIncrease;
+                    {/* DIREITA: Escolha de Atributos por Nível */}
+                    <div className="level-up-attributes-section" style={{ display: 'flex', flexDirection: 'column', gap: '15px', maxHeight: '400px', overflowY: 'auto', paddingRight: '10px' }}>
+                        <h3 style={{ margin: '0 0 5px 0' }}>{t('level_up.select_attributes', { defaultValue: 'Selecione os Atributos' })}</h3>
 
-                            // Verifica se este botão dá carry weight
-                            const cwInc = effSettings.carryWeightIncrease || 0;
-                            const cwMethod = effSettings.carryWeightMethod || 'none';
-                            const linked = effSettings.carryWeightLinkedAttributes || [];
-                            const givesCW = cwInc > 0 && (cwMethod === 'auto' || (cwMethod === 'linked' && linked.includes(attr)));
-
+                        {levelsToProcess.map(({ level, eff }) => {
+                            const selectedAttr = selectedAttributes[level];
                             return (
-                                <div key={attr} style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                    {/* "Janela de conversa" simulada como um pequeno balão sobre o botão */}
-                                    {givesCW && (
-                                        <div className="cw-bonus-bubble" style={{ opacity: isSelected ? 1 : 0.7 }}>
-                                            {t('level_up.cw_bonus_tooltip', { amount: cwInc })}
-                                            <div className="cw-bonus-triangle" />
-                                        </div>
-                                    )}
-                                    <button
-                                        className={`attribute-btn ${attr.toLowerCase()} ${isSelected ? 'selected-attr' : ''}`}
-                                        onClick={() => setSelectedAttribute(attr)}
-                                        style={{ marginTop: '10px' }}
-                                    >
-                                        {t(`header.${attr.toLowerCase()}`)} (+{incValue})
-                                    </button>
+                                <div key={level} className="level-attribute-row" style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '5px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                                    <div style={{ marginBottom: '8px', fontWeight: 'bold', color: '#4dd0e1', fontSize: '1.1rem' }}>{t('common.lvl')} {level}</div>
+                                    <div style={{ display: 'flex', gap: '10px', justifyContent: 'space-between' }}>
+                                        {['Health', 'Magicka', 'Stamina'].map(attr => {
+                                            const isSelected = selectedAttr === attr;
+                                            const incValue = attr === 'Health' ? eff.healthIncrease : attr === 'Magicka' ? eff.magickaIncrease : eff.staminaIncrease;
+
+                                            const cwInc = eff.carryWeightIncrease || 0;
+                                            const cwMethod = eff.carryWeightMethod || 'none';
+                                            const linked = eff.carryWeightLinkedAttributes || [];
+                                            const givesCW = cwInc > 0 && (cwMethod === 'auto' || (cwMethod === 'linked' && linked.includes(attr)));
+
+                                            return (
+                                                <button
+                                                    key={attr}
+                                                    className={`attribute-btn ${attr.toLowerCase()} ${isSelected ? 'selected-attr' : ''}`}
+                                                    onClick={() => setSelectedAttributes(prev => ({ ...prev, [level]: attr }))}
+                                                    style={{
+                                                        flex: 1, padding: '8px', fontSize: '0.85rem',
+                                                        opacity: isSelected ? 1 : 0.6,
+                                                        border: isSelected ? '1px solid white' : '1px solid transparent'
+                                                    }}
+                                                >
+                                                    <div>{t(`header.${attr.toLowerCase()}`)}</div>
+                                                    <div style={{ color: '#ffd700' }}>(+{incValue})</div>
+                                                    {givesCW && <div style={{ fontSize: '0.7rem', color: '#ccc', marginTop: '2px' }}>{t('common.cw', { defaultValue: 'CW' })} +{cwInc}</div>}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             );
                         })}
@@ -2813,9 +2892,9 @@ const LevelUpModal = ({ trees, settings, rules, targetLevel, onSelect }: {
 
                 <div className="modal-actions" style={{ marginTop: '25px' }}>
                     <button
-                        className={`modal-btn yes-btn ${(!selectedAttribute || isProcessing) ? 'disabled-btn' : ''}`}
+                        className={`modal-btn yes-btn ${(!canConfirm || isProcessing) ? 'disabled-btn' : ''}`}
                         onClick={handleConfirm}
-                        disabled={!selectedAttribute || isProcessing}
+                        disabled={!canConfirm || isProcessing}
                     >
                         {isProcessing ? t('common.processing') : t('level_up.confirm_btn')}
                     </button>
@@ -3130,6 +3209,23 @@ const ConfirmationModal = ({ title, message, onConfirm, onCancel }: { title: str
     );
 };
 
+const AlertModal = ({ title, message, onClose }: { title: string, message: string, onClose: () => void }) => {
+    return (
+        <div className="skyrim-modal-overlay" style={{ zIndex: 9500 }}>
+            <div className="skyrim-modal-content">
+                <h2 style={{ color: '#f44336' }}>{title}</h2>
+                <div className="tooltip-divider" style={{ width: '100%', marginBottom: '20px' }}></div>
+                <p style={{ fontSize: '1.2rem', lineHeight: '1.6' }}>{message}</p>
+                <div className="modal-actions" style={{ justifyContent: 'center' }}>
+                    <button className="modal-btn no-btn" onClick={onClose}>
+                        {t('common.ok', { defaultValue: 'OK' })}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 // --- Main App ---
 function App() {
     const [playerData, setPlayerData] = useState<PlayerData | null>(null);
@@ -3156,6 +3252,7 @@ function App() {
     const [isCreatingTree, setIsCreatingTree] = useState(false);
     const [newTreeName, setNewTreeName] = useState("");
     const [confirmAction, setConfirmAction] = useState<{ title: string, message: string, action: () => void } | null>(null);
+    const [alertMessage, setAlertMessage] = useState<{ title: string, message: string } | null>(null);
     const [, setIsLangLoading] = useState(false);
     const hoverDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -3183,18 +3280,32 @@ function App() {
         containScroll: 'trimSnaps'
     });
 
-    const shouldScrollOnBack = useRef(false);
+
     const shouldShowLevelUp = useMemo(() => {
-        return playerData?.isLevelUpMenuOpen && !isEditorMode && settings;
-    }, [playerData?.isLevelUpMenuOpen, isEditorMode, settings]);
+        return (playerData?.pendingLevelUps || 0) > 0 && !isEditorMode && settings;
+    }, [playerData?.pendingLevelUps, isEditorMode, settings]);
 
     const handleCloseDetail = useCallback((currentTreeName?: string) => {
-        if (currentTreeName) {
-            setHoveredSkillName(currentTreeName);
-            shouldScrollOnBack.current = true;
+        // Usa o nome recebido ou o que estava focado no momento
+        const targetName = currentTreeName || hoveredSkillName;
+
+        if (targetName) {
+            setHoveredSkillName(targetName);
+            if (emblaApi) {
+                const index = filteredTrees.findIndex(t => t.name === targetName);
+                if (index !== -1) {
+                    // Força a posição imediatamente
+                    emblaApi.scrollTo(index, true);
+
+                    // Garante que o Embla não vai resetar pro 0 após o recálculo visual do navegador
+                    setTimeout(() => {
+                        if (emblaApi) emblaApi.scrollTo(index, true);
+                    }, 10);
+                }
+            }
         }
         setSelectedSkill(null);
-    }, []);
+    }, [emblaApi, filteredTrees, hoveredSkillName]);
 
     const applyHoveredSkill = useCallback((name: string | null) => {
         if (hoverDebounceRef.current) clearTimeout(hoverDebounceRef.current);
@@ -3208,6 +3319,13 @@ function App() {
                 });
             }, 300); // Debounce de 2 segundos garantido
         }
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            Object.keys(svgContentCache).forEach(key => delete svgContentCache[key]);
+            imageValidationCache.clear();
+        };
     }, []);
 
     useEffect(() => {
@@ -3324,7 +3442,9 @@ function App() {
     useEffect(() => {
         const handleHardwareBack = () => {
             // A ordem aqui define a prioridade de fechamento (do mais alto para o mais baixo)
-            if (confirmAction) {
+            if (alertMessage) {
+                setAlertMessage(null); 
+            } else if (confirmAction) {
                 setConfirmAction(null);
             } else if (browserField) {
                 setBrowserField(null);
@@ -3339,8 +3459,7 @@ function App() {
             } else if (confirmingPerk) {
                 setConfirmingPerk(null);
             } else if (selectedSkill) {
-                // Se estiver dentro de uma constelação, volta pro carrossel
-                handleCloseDetail(selectedSkill);
+                handleCloseDetail(hoveredSkillName || selectedSkill);
             } else if (playerData?.isLevelUpMenuOpen && !isEditorMode) {
                 // Se o Level Up estiver aberto, não faz nada (obriga o jogador a alocar pontos)
             } else {
@@ -3358,7 +3477,7 @@ function App() {
         confirmAction, browserField, isCreatingTree, isEditingUISettings,
         editingTree, isEditingSettings, confirmingPerk, selectedSkill,
         playerData?.isLevelUpMenuOpen, isEditorMode, handleCloseDetail,
-        closeMenuWithAnimation
+        closeMenuWithAnimation, alertMessage
     ]);
 
     const updateTreeNodes = useCallback((treeName: string, newNodes: PerkNode[]) => {
@@ -3465,24 +3584,42 @@ function App() {
                 data.trees.forEach((tree: SkillTreeData) => {
                     if (tree.bgPath) pathsToLoad.add(tree.bgPath);
                     if (tree.iconPath) pathsToLoad.add(tree.iconPath);
-                });
-
-                const promises = Array.from(pathsToLoad).map(path => {
-                    return new Promise<void>((resolve) => {
-                        if (!path || path.trim() === "") resolve();
-                        else if (path.toLowerCase().endsWith('.svg')) fetch(path).then(() => resolve()).catch(() => resolve());
-                        else {
-                            const img = new Image();
-                            img.onload = () => resolve(); img.onerror = () => resolve();
-                            img.src = path;
-                        }
+                    if (tree.iconPerkPath) pathsToLoad.add(tree.iconPerkPath);
+                    tree.nodes.forEach(node => {
+                        if (node.icon) pathsToLoad.add(node.icon);
                     });
                 });
 
-                Promise.all(promises).then(() => {
-                    requestAnimationFrame(() => requestAnimationFrame(() => {
-                        setIsLoaded(true);
-                    }));
+                // LIBERA A TELA IMEDIATAMENTE! Não trava mais a UI se um SVG demorar pra carregar
+                requestAnimationFrame(() => requestAnimationFrame(() => {
+                    setIsLoaded(true);
+                }));
+
+                // Faz o pre-fetch background em paralelo (Cache na Entrada)
+                Array.from(pathsToLoad).forEach(path => {
+                    if (!path || path.trim() === "") return;
+
+                    if (path.toLowerCase().endsWith('.svg')) {
+                        if (!svgContentCache[path]) {
+                            fetch(path)
+                                .then(res => res.text())
+                                .then(text => {
+                                    if (text.includes('<svg')) {
+                                        // Limpa também durante o pré-carregamento
+                                        const cleaned = text.replace(/(<svg[^>]*?)\s+width=(["']).*?\2/i, '$1')
+                                            .replace(/(<svg[^>]*?)\s+height=(["']).*?\2/i, '$1');
+                                        svgContentCache[path] = cleaned;
+                                    } else {
+                                        svgContentCache[path] = `<img src="${path}" alt="" style="width: 100%; height: 100%; object-fit: contain; pointer-events: none;" />`;
+                                    }
+                                })
+                                .catch(() => { /* ignora erros de arquivos ausentes */ });
+                        }
+                    } else {
+                        // Força carregamento nativo para cache de memório JPG/PNG
+                        const img = new Image();
+                        img.src = path;
+                    }
                 });
             }
         };
@@ -3548,8 +3685,17 @@ function App() {
             }
         }
 
-        if (canUnlockTarget && !isTargetUnlocked && playerData && playerData.perkPoints >= targetCost) {
-            setConfirmingPerk({ ...node, name: targetName, perk: targetPerkId, perkCost: targetCost });
+        if (canUnlockTarget && !isTargetUnlocked && playerData) {
+            if (playerData.perkPoints >= targetCost) {
+                setConfirmingPerk({ ...node, name: targetName, perk: targetPerkId, perkCost: targetCost });
+            } else {
+                // NOVO: Jogador não tem pontos suficientes!
+                playSound('UIMenuCancelSD'); // Toca o som de recusa
+                setAlertMessage({
+                    title: t('common.warning', { defaultValue: 'Aviso' }),
+                    message: t('unlock_perk.insufficient_points', { defaultValue: 'Você não possui pontos de habilidade suficientes para desbloquear este Perk.' })
+                });
+            }
         }
     }, [isEditorMode, playerData]);
 
@@ -3650,17 +3796,7 @@ function App() {
         };
     }, [emblaApi, filteredTrees, applyHoveredSkill]);
 
-    useEffect(() => {
-        if (emblaApi && !selectedSkill && shouldScrollOnBack.current && hoveredSkillName) {
-            const index = filteredTrees.findIndex(t => t.name === hoveredSkillName);
-            if (index !== -1) {
-                setTimeout(() => {
-                    emblaApi.scrollTo(index);
-                    shouldScrollOnBack.current = false;
-                }, 50);
-            }
-        }
-    }, [emblaApi, selectedSkill, hoveredSkillName, filteredTrees]);
+
 
     const handleLegendaryRequest = useCallback((treeName: string) => {
         const targetTree = skillTrees.find(t => t.name === treeName);
@@ -3744,39 +3880,71 @@ function App() {
                 </button>
             </div>
 
-            {!selectedSkill && (
+            <div style={{ position: 'absolute', bottom: '40px', right: '40px', zIndex: 1500 }}>
+                <button className="ui-settings-btn" onClick={() => setIsEditingUISettings(true)}>
+                    {t('ui_options.btn_text')}
+                </button>
+            </div>
+
+            <div
+                className="skills-infinite-container embla"
+                ref={emblaRef}
+                style={selectedSkill ? { visibility: 'hidden', opacity: 0, pointerEvents: 'none' } : undefined}
+                onWheel={handleCarouselWheel}
+                onMouseDown={handleMainCarouselMouseDown}
+                onMouseMove={handleMainCarouselMouseMove}
+                onMouseUp={handleMainCarouselMouseUp}
+                onMouseLeave={handleMainCarouselMouseUp}
+            >
+                <div className={`skills-columns-track embla__container ${hoveredSkillName ? 'has-forced-hover' : ''}`}>
+                    {filteredTrees.map((tree) => {
+                        const isHovered = tree.name === hoveredSkillName;
+                        return (
+                            <div className={`embla__slide ${isHovered ? 'is-forced-hover' : ''}`} key={`col-${tree.name}`}>
+                                <SkillColumn
+                                    treeData={tree}
+                                    globalSettings={settings}
+                                    uiSettings={uiSettings}
+                                    formLists={formLists}
+                                    onSelect={handleCarouselSkillSelect}
+                                    onContextMenu={handleTreeContextMenu}
+                                    isForcedHover={isHovered}
+                                />
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {skillTrees.length > 0 && (
                 <div
-                    className="skills-infinite-container embla"
-                    ref={emblaRef}
-                    onWheel={handleCarouselWheel}
-                    onMouseDown={handleMainCarouselMouseDown}
-                    onMouseMove={handleMainCarouselMouseMove}
-                    onMouseUp={handleMainCarouselMouseUp}
-                    onMouseLeave={handleMainCarouselMouseUp}
+                    className="bottom-ui-panel"
+                    style={selectedSkill ? { visibility: 'hidden', opacity: 0, pointerEvents: 'none' } : undefined}
                 >
-                    <div className={`skills-columns-track embla__container ${hoveredSkillName ? 'has-forced-hover' : ''}`}>
-                        {filteredTrees.map((tree) => {
-                            const isHovered = tree.name === hoveredSkillName;
-                            return (
-                                <div className={`embla__slide ${isHovered ? 'is-forced-hover' : ''}`} key={`col-${tree.name}`}>
-                                    <SkillColumn
-                                        treeData={tree}
-                                        globalSettings={settings}
-                                        uiSettings={uiSettings}
-                                        formLists={formLists}
-                                        onSelect={handleCarouselSkillSelect}
-                                        onContextMenu={handleTreeContextMenu}
-                                        isForcedHover={isHovered}
-                                    />
-                                </div>
-                            );
-                        })}
+                    <div className="category-filter-container">
+                        {categories.map(cat => (
+                            <button key={cat} className={`category-btn ${activeCategory === cat ? 'active' : ''}`} onClick={() => setActiveCategory(cat)}>
+                                {cat === "All" ? t('common.all').toUpperCase() : cat.toUpperCase()}
+                            </button>
+                        ))}
                     </div>
+
+                    <BottomSkillGrid
+                        trees={filteredTrees}
+                        globalSettings={settings}
+                        uiSettings={uiSettings}
+                        onHoverSkill={handleSnapToSkill}
+                        onClickSkill={handleBottomSkillSelect}
+                        onContextMenu={handleTreeContextMenu}
+                    />
                 </div>
             )}
 
             {!selectedSkill && skillTrees.length > 0 && (
-                <div className="bottom-ui-panel">
+                <div
+                    className="bottom-ui-panel"
+                    style={selectedSkill ? { visibility: 'hidden', opacity: 0, pointerEvents: 'none' } : undefined}
+                >
                     <div className="category-filter-container">
                         {categories.map(cat => (
                             <button key={cat} className={`category-btn ${activeCategory === cat ? 'active' : ''}`} onClick={() => setActiveCategory(cat)}>
@@ -3813,6 +3981,13 @@ function App() {
                     onTreeContextMenu={handleTreeContextMenu}
                     uiSettings={uiSettings}
                     onLegendary={handleLegendaryRequest}
+                    onSlideChange={(name) => {
+                        const index = filteredTrees.findIndex(t => t.name === name);
+                        if (index !== -1 && emblaApi) {
+                            emblaApi.scrollTo(index, true); // O 'true' faz pular instantaneamente sem animar!
+                            applyHoveredSkill(name); // Garante que a árvore correta fique "acesa"
+                        }
+                    }}
                 />
             )}
 
@@ -3831,7 +4006,8 @@ function App() {
                     trees={skillTrees}
                     rules={rules}
                     settings={settings}
-                    targetLevel={(playerData!.level || 1) + 1}
+                    currentLevel={playerData!.level || 1}
+                    pendingLevelUps={playerData!.pendingLevelUps || 0}
                     onSelect={handleAttributeSelect}
                 />
             )}
@@ -3936,6 +4112,14 @@ function App() {
                     message={confirmAction.message}
                     onConfirm={confirmAction.action}
                     onCancel={() => setConfirmAction(null)}
+                />
+            )}
+
+            {alertMessage && (
+                <AlertModal
+                    title={alertMessage.title}
+                    message={alertMessage.message}
+                    onClose={() => setAlertMessage(null)}
                 />
             )}
         </div>

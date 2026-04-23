@@ -4,7 +4,6 @@
 
 extern nlohmann::json GetSettings();
 
-
 namespace MenuHooks {
 
     class LevelUpMenuHook {
@@ -120,8 +119,6 @@ bool OnInput(RE::InputEvent* event) {
 
         // Se a ação for ESC (cancel) ou TAB (tweenMenu)...
         if (action == userEvents->cancel || action == userEvents->tweenMenu) {
-
-            // Bloqueia o fechamento via TAB/ESC apenas se o Menu de Level Up estiver aberto
             if (Prisma::IsLevelUpMenuOpen()) {
                 logger::debug("OnInput: Voltar ignorado pois o menu de Level Up esta ativo.");
                 return true; // Bloqueia e consome o input
@@ -131,24 +128,86 @@ bool OnInput(RE::InputEvent* event) {
         }
         return true;
     }
-    /*if (button->GetIDCode() == RE::BSWin32KeyboardDevice::Keys::kF3) {
-        auto player = RE::PlayerCharacter::GetSingleton();
-        player->AddSkillExperience(RE::ActorValue::kHeavyArmor, 1000.0f);
-        Manager::GetSingleton()->AddCustomSkillXP("testarone", 1000.0f);
-        return true;
-    }*/
-    
-    
 
+    
     return false;
 }
 
+using namespace RE;
+void Inject(std::string_view a_menuName) {
+    const auto ui = RE::UI::GetSingleton();
+    if (!ui) return;
+
+    const auto menu = ui->GetMenu(a_menuName);
+    if (!menu) {
+        return;
+    }
+
+    const auto movie = menu->uiMovie;
+    if (!movie) {
+        return;
+    }
+
+    RE::GFxValue _root;
+    movie->GetVariable(&_root, "_root");
+
+    RE::GFxValue args[2];
+    args[0] = RE::GFxValue("NoStats");
+    args[1] = RE::GFxValue(1298);
+    _root.Invoke("createEmptyMovieClip", nullptr, args, 2);
+    if (movie->GetVariable(&_root, "_root.NoStats")) {
+        RE::GFxValue args2[1];
+        args2[0] = RE::GFxValue("nostats_inject.swf");
+        _root.Invoke("loadMovie", nullptr, args2, 1);
+    }
+}
+
+
+class MenuEvents : public RE::BSTEventSink<MenuOpenCloseEvent> {
+public:
+    BSEventNotifyControl ProcessEvent(const MenuOpenCloseEvent* event, BSTEventSource<MenuOpenCloseEvent>*) {
+        if (event->opening && event->menuName == TweenMenu::MENU_NAME) {
+            Inject(TweenMenu::MENU_NAME);
+        }
+        else if (event->opening && event->menuName == "PrismaUI_FocusMenu") {
+            auto ui = RE::UI::GetSingleton();
+            if (ui && !Prisma::IsHidden()) {
+                auto focusMenu = ui->GetMenu("PrismaUI_FocusMenu");
+                if (focusMenu) {
+                    focusMenu->menuFlags.set(RE::UI_MENU_FLAGS::kFreezeFrameBackground, RE::UI_MENU_FLAGS::kTopmostRenderedMenu);
+                }
+            }
+
+        }
+        return BSEventNotifyControl::kContinue;
+    }
+};
+
+class ModEvents : public RE::BSTEventSink<SKSE::ModCallbackEvent> {
+public:
+    BSEventNotifyControl ProcessEvent(const SKSE::ModCallbackEvent* a_event,
+        RE::BSTEventSource<SKSE::ModCallbackEvent>*) {
+        if (!a_event || a_event->eventName != "NSM_Open"sv) return BSEventNotifyControl::kContinue;
+		logger::info("NSM_Open event received, showing Prisma...");
+        auto msgQueue = RE::UIMessageQueue::GetSingleton();
+        if (msgQueue) {
+            // 2. Envia o comando para esconder (kHide) o TweenMenu
+            msgQueue->AddMessage(RE::TweenMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
+        }
+        Prisma::Show();
+        return BSEventNotifyControl::kContinue;
+    }
+};
 
 void Hooks::Install() {
     SKSE::AllocTrampoline(64);
     ProcessInputQueueHook::install();
     InputEventHandler::Register(OnInput);
-    MenuHooks::StatsMenuHook::Install();
-    MenuHooks::LevelUpMenuHook::Install();
+    //MenuHooks::StatsMenuHook::Install();
+    //MenuHooks::LevelUpMenuHook::Install();
+    static MenuEvents menuSink;
+    static ModEvents modSink;
 
+    RE::UI::GetSingleton()->AddEventSink<MenuOpenCloseEvent>(&menuSink);
+    SKSE::GetModCallbackEventSource()->AddEventSink(&modSink);
 }
