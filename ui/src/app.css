@@ -160,6 +160,7 @@ body {
     gap: 8px;
     font-size: 0.9rem;
     letter-spacing: 2px;
+    pointer-events: auto;
 }
 
 .header-label {
@@ -2783,4 +2784,95 @@ body {
     border-left: 6px solid transparent;
     border-right: 6px solid transparent;
     border-top: 6px solid rgba(255, 152, 0, 0.95);
+}
+
+.resources-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 10px;
+    z-index: 500;
+    min-width: 180px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.8);
+}
+
+.resource-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.9rem;
+    color: #4dd0e1;
+    font-family: 'Sovngarde', sans-serif;
+    border-bottom: 1px dotted rgba(255, 255, 255, 0.1);
+    padding-bottom: 4px;
+}
+
+    .resource-item span:last-child {
+        font-weight: bold;
+        color: #ffd700;
+    }
+
+/* Container que envolve os pontos e o tooltip */
+.perk-points-wrapper {
+    position: relative;
+    display: inline-block;
+    cursor: help;
+}
+
+/* O Tooltip flutuante e escondido por padrão */
+.resources-hover-tooltip {
+    position: absolute;
+    top: 120%;
+    right: 0;
+    background-color: rgba(20, 20, 25, 0.95);
+    border: 1px solid #c9a565; /* Cor dourada padrão de Skyrim */
+    border-radius: 4px;
+    padding: 10px;
+    min-width: 200px;
+    box-shadow: 0px 4px 12px rgba(0,0,0,0.8);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-10px);
+    transition: all 0.2s ease-in-out;
+    z-index: 100;
+    pointer-events: none;
+}
+
+/* Mostra o Tooltip no Hover */
+.perk-points-wrapper:hover .resources-hover-tooltip {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.tooltip-header {
+    font-size: 0.85em;
+    color: #888;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #444;
+    padding-bottom: 4px;
+}
+
+.resource-item {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    font-size: 0.95em;
+    color: #eee;
+}
+
+    .resource-item .resource-amount {
+        font-weight: bold;
+        color: #c9a565;
+    }
+
+.cost-plus {
+    color: #888;
+    margin: 0 4px;
 }

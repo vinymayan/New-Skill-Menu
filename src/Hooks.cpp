@@ -109,7 +109,7 @@ struct ProcessInputQueueHook {
 
 bool OnInput(RE::InputEvent* event) { 
     if (!event) return false;
-    if (event->device != RE::INPUT_DEVICE::kKeyboard) return false;
+
     auto button = event->AsButtonEvent();
     if (!button) return false;
     if (!button->IsDown()) return false;
@@ -126,7 +126,11 @@ bool OnInput(RE::InputEvent* event) {
             logger::debug("OnInput: Botao Voltar pressionado. Chamando Prisma::TriggerBack()...");
             Prisma::TriggerBack(); // Avisa o JavaScript
         }
-        return true;
+        if (action == userEvents->up) { Prisma::SendKeyPress("w"); return true; }
+        if (action == userEvents->down) { Prisma::SendKeyPress("s"); return true; }
+        if (action == userEvents->left) { Prisma::SendKeyPress("a"); return true; }
+        if (action == userEvents->right) { Prisma::SendKeyPress("d"); return true; }
+        if (action == userEvents->accept) { Prisma::SendKeyPress("enter"); return true; }
     }
 
     

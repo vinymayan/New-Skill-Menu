@@ -32,10 +32,21 @@ interface AvailablePerk {
     nextPerk?: string;
     requirements?: Requirement[];
 }
+interface CustomResource {
+    id: string;
+    name: string;
+    glob: string;
+}
+
+interface CustomCost {
+    resourceId: string;
+    amount: number;
+}
 interface PerkRank {
     perk: string; name: string; description: string;
     perkCost: number; requirements: Requirement[];
     isUnlocked?: boolean; canUnlock?: boolean;
+    customCosts?: CustomCost[];
 }
 interface PerkNode {
     id: string; perk: string; name: string; description: string;
@@ -43,6 +54,7 @@ interface PerkNode {
     links: string[]; isUnlocked: boolean; canUnlock?: boolean;
     perkCost: number;
     nextRanks?: PerkRank[];
+    customCosts?: CustomCost[];
 }
 interface ExperienceFormula {
     useMult: number;
@@ -83,6 +95,7 @@ interface PlayerData {
     dragonSouls?: number;
     pendingLevelUps?: number;
     isLevelUpMenuOpen?: boolean;
+    resourceValues?: Record<string, number>;
 }
 interface LevelRule {
     level: number;
@@ -136,6 +149,18 @@ interface SettingsData {
     };
     categories: string[];
     codes: CodeData[];
+}
+
+function resolveText(text: string | undefined, isEditor: boolean): string {
+    if (!text) return "";
+    if (isEditor) return text;
+
+    // Procura por todas as instâncias de {{$...}}
+    return text.replace(/\{\{\$([a-zA-Z0-9_.]+)\}\}/g, (match, key) => {
+        const translated = t(key);
+        // Se houver tradução retorna ela, caso contrário retorna a string bruta
+        return translated !== key ? translated : match;
+    });
 }
 
 // === DROPDOWN CUSTOMIZADO ===
@@ -961,7 +986,8 @@ const InlineSVGIcon = memo(({ src, className, alt }: { src: string, className?: 
     );
 });
 
-const PlayerHeader = ({ player }: { player: PlayerData }) => {
+const PlayerHeader = ({ player, customResources }: { player: PlayerData, customResources?: CustomResource[] }) => {
+    const [showResources, setShowResources] = useState(false);
     return (
         <div className="skyrim-header">
             <div className="header-top-row">
@@ -985,9 +1011,27 @@ const PlayerHeader = ({ player }: { player: PlayerData }) => {
                     <span className="header-value">{player.race || 'Nord'}</span>
                 </div>
 
-                <div className="header-item">
-                    <span className="header-label">{t('header.perk_points')}</span>
+                <div className="header-item"
+                    onMouseEnter={() => setShowResources(true)}
+                    onMouseLeave={() => setShowResources(false)}
+                    style={{ position: 'relative', cursor: 'pointer' }}>
+                    <span className="header-label">{t('header.resources', { defaultValue: 'Resources' })}</span>
                     <span className="header-value">{player.perkPoints}</span>
+
+                    {showResources && (
+                        <div className="resources-dropdown">
+                            <div className="resource-item">
+                                <span>{t('header.perk_points', { defaultValue: 'Perk Points' })}</span>
+                                <span>{player.perkPoints}</span>
+                            </div>
+                            {customResources && customResources.map(res => (
+                                <div key={res.id} className="resource-item">
+                                    <span>{resolveText(res.name, false)}</span>
+                                    <span>{player.resourceValues?.[res.id] || 0}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 <div className="header-item">
@@ -1107,7 +1151,7 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
                 onFinish: () => {
                     // Reaplica o cache ao fim da animação
                     if (image && nodeGroup) {
-                        nodeGroup.cache({ pixelRatio: 2, padding: 20 });
+                        nodeGroup.cache({ pixelRatio: 2, offset: 20 });
                     }
                 }
             });
@@ -1116,24 +1160,24 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
 
     // Aplica o cache inicial seguindo a lógica de Entrada/Saída
     useEffect(() => {
-        // "deixe os svgs já carregados": Só ativa o cache se a imagem existir e estiver pronta
+
         if (!image) return;
 
         const iconNode = iconGroupRef.current;
         const groupNode = groupRef.current;
 
-        // "adicione cache na entrada"
+
         if (iconNode) {
             iconNode.clearCache();
-            iconNode.cache({ pixelRatio: 2, padding: 10 });
+            iconNode.cache({ pixelRatio: 2, offset: 10 });
         }
         if (groupNode) {
             groupNode.clearCache();
-            // O padding de 20 é fundamental para não cortar o Blur da sombra e gerar blocos cinzas
-            groupNode.cache({ pixelRatio: 2, padding: 20 });
+            // O offset de 20 é fundamental para não cortar o Blur da sombra e gerar blocos cinzas
+            groupNode.cache({ pixelRatio: 2, offset: 20 });
         }
 
-        // "remova o cache na saída"
+        // remove o cache na saida
         return () => {
             if (iconNode) iconNode.clearCache();
             if (groupNode) groupNode.clearCache();
@@ -1213,6 +1257,7 @@ const PerkNodeElement = memo(({ node, treeColor, iconPerkPath, isPreview, isEdit
         iconSource = iconPerkPath || DEFAULT_PERK_ICON;
     }
     const iconImage = useValidImage(iconSource, DEFAULT_PERK_ICON);
+    const displayName = resolveText(node.name || t('common.unknown'), isEditorMode);
 
     return (
         <div
@@ -1247,11 +1292,11 @@ const PerkNodeElement = memo(({ node, treeColor, iconPerkPath, isPreview, isEdit
             }}
         >
             <div className="perk-icon-img">
-                <InlineSVGIcon src={iconImage} alt={node.name} />
+                <InlineSVGIcon src={iconImage} alt={displayName} />
             </div>
             {!isPreview && (uiSettings ? !uiSettings.hidePerkNames : true) && (
                 <div className="perk-node-label" style={{ opacity: node.isUnlocked || node.canUnlock ? 1 : 0.6 }}>
-                    {(node.name || t('common.unknown')).toUpperCase()}
+                    {displayName.toUpperCase()}
                 </div>
             )}
             {node.nextRanks && node.nextRanks.length > 0 && (
@@ -1424,19 +1469,18 @@ const TreeVisualNodes = memo(({ treeData, isPreview, isEditorMode,
     );
 });
 
-const SettingsModal = ({ settings, rules, onClose, onSaveSettings, onSaveRules, onResetAllPerks }: {
-    settings: SettingsData,
-    rules: LevelRule[],
-    onClose: () => void,
-    onSaveSettings: (s: SettingsData) => void,
-    onSaveRules: (r: LevelRule[]) => void,
-    onResetAllPerks: () => void
+const SettingsModal = ({ settings, rules, customResources, formLists, onClose, onSaveSettings, onSaveRules, onSaveResources, onDeleteResource, onResetAllPerks }: {
+    settings: SettingsData, rules: LevelRule[], customResources: CustomResource[], formLists: Record<string, AvailablePerk[]>, onClose: () => void,
+    onSaveSettings: (s: SettingsData) => void, onSaveRules: (r: LevelRule[]) => void, onSaveResources: (res: CustomResource[]) => void, onDeleteResource: (id: string) => void, onResetAllPerks: () => void
 }) => {
     const [settingsData, setSettingsData] = useState<SettingsData>(JSON.parse(JSON.stringify(settings)));
     const [rulesData, setRulesData] = useState<LevelRule[]>(JSON.parse(JSON.stringify(rules || [])));
 
-    const [activeTab, setActiveTab] = useState<'base' | 'rules' | 'codes' | 'categories'>('base');
+    const [activeTab, setActiveTab] = useState<'base' | 'rules' | 'codes' | 'categories' | 'resources'>('base');
+    const [resourcesData, setResourcesData] = useState<CustomResource[]>(JSON.parse(JSON.stringify(customResources || [])));
     const [newCatName, setNewCatName] = useState("");
+
+    const [selectingGlobalIdx, setSelectingGlobalIdx] = useState<number | null>(null);
 
     const handleBaseChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value, type, checked } = e.target;
@@ -1492,6 +1536,7 @@ const SettingsModal = ({ settings, rules, onClose, onSaveSettings, onSaveRules, 
                     <button className={activeTab === 'base' ? 'active' : ''} onClick={() => setActiveTab('base')}>{t('settings.tabs.base')}</button>
                     <button className={activeTab === 'rules' ? 'active' : ''} onClick={() => setActiveTab('rules')}>{t('settings.tabs.rules')}</button>
                     <button className={activeTab === 'categories' ? 'active' : ''} onClick={() => setActiveTab('categories')}>{t('settings.tabs.categories')}</button>
+                    <button className={activeTab === 'resources' ? 'active' : ''} onClick={() => setActiveTab('resources')}>{t('settings.tabs.resources')}</button>
                     <button className={activeTab === 'codes' ? 'active' : ''} onClick={() => setActiveTab('codes')}>{t('settings.tabs.codes')}</button>
                 </div>
                 <div className="tooltip-divider" style={{ width: '100%', marginBottom: '20px', marginTop: '10px' }}></div>
@@ -1664,6 +1709,32 @@ const SettingsModal = ({ settings, rules, onClose, onSaveSettings, onSaveRules, 
                         </div>
                     )}
 
+                    {activeTab === 'resources' && (
+                        <div className="dynamic-list-container">
+                            <p className="tab-desc">{t('settings.resources.desc', { defaultValue: 'Crie Globals customizados que servirão como Moeda ao comprar Perks.' })}</p>
+                            {resourcesData.map((res, idx) => (
+                                <div key={idx} className="dynamic-card settings-grid compact-grid">
+                                    <label>{t('settings.resources.unique_id', { defaultValue: 'Unique ID' })} <input type="text" value={res.id} onChange={e => { const r = [...resourcesData]; r[idx].id = e.target.value; setResourcesData(r); }} disabled={customResources.some(cr => cr.id === res.id)} /></label>
+                                    <label>{t('settings.resources.display_name', { defaultValue: 'Display Name' })} <input type="text" value={res.name} onChange={e => { const r = [...resourcesData]; r[idx].name = e.target.value; setResourcesData(r); }} /></label>
+
+                                    <label>{t('settings.resources.glob_id', { defaultValue: 'Glob ID' })}
+                                        <button className="form-selector-trigger-btn" onClick={() => setSelectingGlobalIdx(idx)}>
+                                            {res.glob ? (formLists['global']?.find(g => g.id === res.glob)?.name || res.glob) : t('settings.resources.select_glob', { defaultValue: 'Selecione uma Variável Global' })}
+                                        </button>
+                                    </label>
+
+                                    <button className="delete-btn" style={{ gridColumn: 'span 2' }} onClick={() => {
+                                        if (window.confirm(t('settings.resources.delete_confirm', { defaultValue: 'Remover este recurso permanentemente?' }))) {
+                                            onDeleteResource(res.id);
+                                            setResourcesData(resourcesData.filter((_, i) => i !== idx));
+                                        }
+                                    }}>{t('common.delete')}</button>
+                                </div>
+                            ))}
+                            <button className="add-btn" onClick={() => setResourcesData([...resourcesData, { id: `res_${Date.now()}`, name: 'New Resource', glob: '' }])}>{t('settings.resources.add_btn', { defaultValue: 'Adicionar Recurso' })}</button>
+                        </div>
+                    )}
+
                     {activeTab === 'codes' && (
                         <div className="dynamic-list-container">
                             <p className="tab-desc">{t('settings.codes.desc')}</p>
@@ -1698,18 +1769,31 @@ const SettingsModal = ({ settings, rules, onClose, onSaveSettings, onSaveRules, 
                     <button className="modal-btn yes-btn" onClick={() => {
                         onSaveSettings(settingsData);
                         onSaveRules(rulesData);
+                        onSaveResources(resourcesData);
                     }}>{t('common.save')}</button>
                     <button className="modal-btn no-btn" onClick={onClose}>{t('common.cancel')}</button>
                 </div>
             </div>
+            {selectingGlobalIdx !== null && formLists['global'] && (
+                <FormSelectorModal
+                    items={formLists['global']}
+                    onClose={() => setSelectingGlobalIdx(null)}
+                    onSelect={(id) => {
+                        const r = [...resourcesData];
+                        r[selectingGlobalIdx].glob = id;
+                        setResourcesData(r);
+                        setSelectingGlobalIdx(null);
+                    }}
+                />
+            )}
         </div>
     );
 };
 
 const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
     uiSettings, keyboardSelectedNodeId, onUpdateNodePosition,
-    onUpdateNodes, onNodeClick, onTreeContextMenu, formLists, 
-    availableReqs, availableTrees, onRequestBrowse, onLegendary, globalSettings }: {
+    onUpdateNodes, onNodeClick, onTreeContextMenu, formLists,
+    availableReqs, availableTrees, onRequestBrowse, onLegendary, globalSettings, playerData, customResources }: { 
         treeData: SkillTreeData,
         isEditorMode: boolean,
         keyboardSelectedNodeId?: string | null,
@@ -1719,11 +1803,13 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
         onTreeContextMenu?: (e: React.MouseEvent, name: string) => void,
         globalSettings?: SettingsData | null,
         uiSettings?: UISettings | null,
-        formLists?: Record<string, AvailablePerk[]>, 
+        formLists?: Record<string, AvailablePerk[]>,
         availableReqs: RequirementDef[],
         availableTrees: string[],
         onRequestBrowse: (field: string) => void,
-        onLegendary?: (treeName: string) => void
+        onLegendary?: (treeName: string) => void,
+        playerData: PlayerData | null, 
+        customResources: CustomResource[] 
     }) => {
     const detailBg = useValidImage(treeData.bgPath, DEFAULT_BG);
     const treeColor = treeData.color || DEFAULT_COLOR;
@@ -1756,6 +1842,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
     const isLegendaryEnabled = globalSettings?.base.enableLegendary !== false;
     const canLegendary = isLegendaryEnabled && treeData.currentLevel >= hardCap;
     const resetLevel = treeData.initialLevel || 15;
+    const resolvedTreeName = resolveText(treeData.displayName || treeData.name, isEditorMode);
 
     useEffect(() => {
         // Mantemos apenas o cálculo dos limites para o Canvas não "cortar" os ícones
@@ -2100,7 +2187,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                         <span className="legendary-text">{t('legendary.btn_text')}</span>
                     </div>
                 )}
-                <h1>{(treeData.displayName || treeData.name).toUpperCase()}</h1>
+                <h1>{resolvedTreeName.toUpperCase()}</h1>
                 <div className="tree-divider"></div>
             </div>
 
@@ -2173,12 +2260,14 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                     const isBaseRank = safeIdx === 0;
                     const currentData = isBaseRank ? nodeToShow : nodeToShow.nextRanks![safeIdx - 1];
                     const resolveReqValue = (req: Requirement) => {
-                        // Se a lista desse tipo de requisito existir no nosso dicionário, procura nela:
                         if (formLists && formLists[req.type]) {
                             return formLists[req.type].find(item => item.id === req.value)?.name || req.value;
                         }
                         return req.value;
                     };
+
+                    const displayName = resolveText(currentData.name, isEditorMode);
+                    const displayDesc = resolveText(currentData.description, isEditorMode);
 
                     return (
                         <div
@@ -2194,7 +2283,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                             onMouseLeave={handleTooltipMouseLeave}
                         >
                             <div className="tooltip-header">
-                                <h2>{currentData.name}</h2>
+                                <h2>{displayName}</h2>
                                 {totalRanks > 1 && (
                                     <div className="rank-navigation">
                                         <button className="rank-nav-btn" onClick={(e) => { e.stopPropagation(); setTooltipRankIdx(prev => Math.max(0, prev - 1)); }} disabled={safeIdx === 0}>{"<"}</button>
@@ -2205,7 +2294,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                             </div>
                             <div className="tooltip-divider" style={{ backgroundColor: treeColor }}></div>
                             {currentData.isUnlocked && <div className="rank-status-tag acquired">{t('unlock_perk.acquired')}</div>}
-                            <p className="perk-desc" style={{ color: currentData.isUnlocked ? '#66bb6a' : '#ccc' }}>{currentData.description}</p>
+                            <p className="perk-desc" style={{ color: currentData.isUnlocked ? '#66bb6a' : '#ccc' }}>{displayDesc}</p>
 
                             {currentData.requirements && currentData.requirements.length > 0 && (
                                 <div className="perk-reqs">
@@ -2217,17 +2306,34 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
 
                                                 {t(`reqs.${req.type}`, {
                                                     val: resolveReqValue(req),
-                                                    target: req.target || treeData.displayName || treeData.name
+                                                    target: resolveText(req.target || treeData.displayName || treeData.name, false)
                                                 })}
                                                 {req.isOr && <span style={{ color: '#ff9800', fontWeight: 'bold', marginLeft: '5px' }}> ({t('common.or')})</span>}
                                             </li>
                                         ))}
                                     </ul>
-                                    {!currentData.isUnlocked && (
-                                        <div className={`cost-tag ${currentData.canUnlock ? 'req-met' : 'req-unmet'}`}>
-                                            {t('unlock_perk.cost_tag', { cost: currentData.perkCost || 1 })}
-                                        </div>
-                                    )}
+                                </div>
+                            )}
+
+                            {!currentData.isUnlocked && (
+                                <div className="perk-reqs" style={{ marginTop: '5px' }}>
+                                    <strong>{t('reqs.costs_label', { defaultValue: 'Costs' })}</strong>
+                                    <ul>
+                                        <li className={playerData && playerData.perkPoints >= (currentData.perkCost || 1) ? 'req-met' : 'req-unmet'}>
+                                            {currentData.perkCost || 1}x {t('header.perk_points', { defaultValue: 'Perk Points' })}
+                                        </li>
+                                        {currentData.customCosts?.map((cost: CustomCost, i: number) => {
+                                            const res = customResources?.find((r: CustomResource) => r.id === cost.resourceId);
+                                            const resName = res ? resolveText(res.name, false) : cost.resourceId;
+                                            const currentAmount = playerData?.resourceValues?.[cost.resourceId] || 0;
+                                            const hasEnough = currentAmount >= cost.amount;
+                                            return (
+                                                <li key={`custom-cost-${i}`} className={hasEnough ? 'req-met' : 'req-unmet'}>
+                                                    {cost.amount}x {resName} (Possui: {currentAmount})
+                                                </li>
+                                            );
+                                        })}
+                                    </ul>
                                 </div>
                             )}
                         </div>
@@ -2259,6 +2365,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                     onRequestBrowse={onRequestBrowse}
                     onSave={handleNodeSave}
                     onClose={() => setEditingNode(null)}
+                    customResources={customResources}
                 />
             )}
         </div>
@@ -2267,9 +2374,10 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
 
 const SkillTreeDetail = ({
     trees, initialSkillName, isEditorMode, uiSettings, globalSettings, formLists, availableReqs, availableTrees, onRequestBrowse,
-    onUpdateNodePosition, onUpdateNodes, onClose, onNodeClick, onTreeContextMenu, onLegendary, onSlideChange 
+    onUpdateNodePosition, onUpdateNodes, onClose, onNodeClick, onTreeContextMenu, onLegendary, onSlideChange, playerData, customResources // <-- ADICIONADO AQUI
 }: {
     trees: SkillTreeData[], initialSkillName: string, isEditorMode: boolean, globalSettings: SettingsData | null, formLists?: Record<string, AvailablePerk[]>, availableReqs: RequirementDef[], availableTrees: string[], onRequestBrowse: (field: string) => void,
+    playerData: PlayerData | null, customResources: CustomResource[],
     onUpdateNodePosition: (t: string, n: string, x: number, y: number) => void,
     onUpdateNodes?: (t: string, nodes: PerkNode[]) => void,
     uiSettings: UISettings | null,
@@ -2395,6 +2503,8 @@ const SkillTreeDetail = ({
                                 onTreeContextMenu={onTreeContextMenu}
                                 uiSettings={uiSettings}
                                 onLegendary={onLegendary}
+                                playerData={playerData}             
+                                customResources={customResources}
                             />
                         </div>
                     ))}
@@ -2404,8 +2514,7 @@ const SkillTreeDetail = ({
     );
 };
 
-const UISettingsModal = ({ availableLanguages, settings, onClose, onSave }: {
-    availableLanguages: string[],
+const UISettingsModal = ({ settings, onClose, onSave }: {
     settings: UISettings, onClose: () => void, onSave: (s: UISettings) => void
 }) => {
     const [formData, setFormData] = useState<UISettings>(settings);
@@ -2421,18 +2530,7 @@ const UISettingsModal = ({ availableLanguages, settings, onClose, onSave }: {
             <div className="skyrim-modal-content settings-modal-content ui-mode" style={{ maxWidth: '500px', minWidth: '400px' }}>
                 <h2>{t('ui_options.title')}</h2>
                 <div className="tooltip-divider" style={{ width: '100%', marginBottom: '20px' }}></div>
-                <label style={{ fontSize: '1.1rem', color: '#ccc', display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                    {t('ui_options.language_label')}
-                    <CustomSelect
-                        options={availableLanguages.map(lang => ({ value: lang, label: lang.toUpperCase() }))}
-                        value={formData.language}
-                        onChange={(val) => setFormData(prev => ({ ...prev, language: val as Language }))}
-                        width="100%"
-                        disableSearch={true}
-                    />
-                </label>
 
-                <div className="tooltip-divider" style={{ width: '100%', margin: '10px 0' }}></div>
                 <div className="settings-grid compact-grid" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                     <label style={{ fontSize: '1.2rem', display: 'flex', flexDirection: 'column', gap: '5px' }}>
                         {t('ui_options.column_preview_label')}
@@ -2486,42 +2584,42 @@ const UISettingsModal = ({ availableLanguages, settings, onClose, onSave }: {
     );
 };
 
-const SkillColumn = memo(({ treeData, uiSettings, globalSettings, formLists, onSelect, onContextMenu, isForcedHover }: {
+const SkillColumn = memo(({ treeData, uiSettings, globalSettings, formLists, onSelect, onContextMenu, isForcedHover, isEditorMode }: {
     treeData: SkillTreeData,
     uiSettings: UISettings | null,
     globalSettings: SettingsData | null,
-    formLists?: Record<string, AvailablePerk[]>, 
+    formLists?: Record<string, AvailablePerk[]>,
     onSelect: (name: string) => void,
     onContextMenu: (e: React.MouseEvent, name: string) => void,
-    isForcedHover?: boolean
+    isForcedHover?: boolean,
+    isEditorMode: boolean
 }) => {
     const ref = useRef<HTMLDivElement>(null);
     const { width, height } = useElementSize(ref);
-    const [isVisible] = useVisibility('0px 100px 0px 100px'); // logic remains same but separate hooks
+    const [isVisible] = useVisibility('0px 100px 0px 100px');
 
     const iconImage = useValidImage(treeData.iconPath, DEFAULT_ICON);
     const resolvedTreeBG = useValidImage(treeData.bgPath, DEFAULT_BG);
     const treeColor = treeData.color || DEFAULT_COLOR;
 
     const isLocked = treeData.treeRequirements && treeData.treeRequirements.some(req => req.isMet === false);
-    const isEditorActive = uiSettings?.enableEditorMode || false;
     const hideName = isLocked && (uiSettings?.hideLockedTreeNames ?? true);
     const shouldForceDefaultBG = isLocked && (uiSettings?.hideLockedTreeBG ?? false);
     const bgImage = shouldForceDefaultBG ? DEFAULT_BG : resolvedTreeBG;
 
-    // --- LÓGICA NOVA ---
     const previewMode = uiSettings?.columnPreviewMode || 'full';
-
-    // Determina o que renderizar baseado no modo escolhido
     const showTree = previewMode === 'full' || previewMode === 'tree';
     const showBG = previewMode === 'full' || previewMode === 'bg';
-    const displayTreeName = hideName ? "????" : (treeData.displayName || treeData.name).toUpperCase();
+
+    const rawTreeName = treeData.displayName || treeData.name;
+    const resolvedTreeName = resolveText(rawTreeName, isEditorMode);
+    const displayTreeName = hideName ? "????" : resolvedTreeName.toUpperCase();
 
     const handleClick = useCallback(() => {
-        if (!isLocked || isEditorActive)
+        if (!isLocked || isEditorMode)
             playSound('UISkillsForwardSD');
         onSelect(treeData.name);
-    }, [onSelect, treeData.name, isLocked, isEditorActive]);
+    }, [onSelect, treeData.name, isLocked, isEditorMode]);
 
     const handleMouseUp = useCallback((e: React.MouseEvent) => {
         if (e.button === 2) {
@@ -2530,7 +2628,6 @@ const SkillColumn = memo(({ treeData, uiSettings, globalSettings, formLists, onS
     }, [onContextMenu, treeData.name]);
 
     const resolveReqValue = (req: Requirement) => {
-        // Se a lista desse tipo de requisito existir no nosso dicionário, procura nela:
         if (formLists && formLists[req.type]) {
             return formLists[req.type].find(item => item.id === req.value)?.name || req.value;
         }
@@ -2545,19 +2642,17 @@ const SkillColumn = memo(({ treeData, uiSettings, globalSettings, formLists, onS
         <div className={`skill-column ${isForcedHover ? 'forced-hover' : ''} ${isLocked ? 'column-locked' : ''}`} ref={ref} onClick={handleClick} onContextMenu={e => e.preventDefault()} onMouseUp={handleMouseUp} onMouseEnter={handleMouseEnter} style={{ '--glow-color': treeColor } as React.CSSProperties}>
 
             <div className="column-tree-preview">
-                {/* Renderiza a Árvore de Perks se o modo permitir */}
                 {showTree && isVisible && !isLocked && (
                     <TreeVisualNodes
                         treeData={treeData}
                         isPreview={true}
                         isEditorMode={false}
-                        containerWidth={width} // Pass width
-                        containerHeight={height * 0.6} // Use 60% height for preview area matching CSS .column-tree-preview height
+                        containerWidth={width}
+                        containerHeight={height * 0.6}
                     />
                 )}
             </div>
 
-            {/* Renderiza o Background se o modo permitir */}
             {showBG && (
                 <div
                     className="column-bg-image"
@@ -2579,7 +2674,7 @@ const SkillColumn = memo(({ treeData, uiSettings, globalSettings, formLists, onS
 
                                 {t(`reqs.${req.type}`, {
                                     val: resolveReqValue(req),
-                                    target: req.target || treeData.displayName || treeData.name
+                                    target: resolveText(req.target || treeData.displayName || treeData.name, false)
                                 })}
                             </li>
                         ))}
@@ -2589,7 +2684,7 @@ const SkillColumn = memo(({ treeData, uiSettings, globalSettings, formLists, onS
 
             <div className="column-content">
                 <div className="skill-icon-container">
-                    <InlineSVGIcon src={iconImage} className="skill-icon" alt={treeData.displayName || treeData.name} />
+                    <InlineSVGIcon src={iconImage} className="skill-icon" alt={displayTreeName} />
                 </div>
                 <div className="skill-info-container">
                     <div className="skill-info">
@@ -2608,11 +2703,12 @@ const SkillColumn = memo(({ treeData, uiSettings, globalSettings, formLists, onS
     );
 });
 
-const BottomSkillGrid = ({ trees, uiSettings, onHoverSkill, onClickSkill, onContextMenu }: {
+const BottomSkillGrid = ({ trees, uiSettings, onHoverSkill, onClickSkill, onContextMenu, isEditorMode }: {
     trees: SkillTreeData[], globalSettings: SettingsData | null,
     onHoverSkill: (name: string | null) => void, onClickSkill: (name: string) => void,
     uiSettings: UISettings | null,
-    onContextMenu: (e: React.MouseEvent, name: string) => void
+    onContextMenu: (e: React.MouseEvent, name: string) => void,
+    isEditorMode: boolean 
 }) => {
     const scrollRef = useRef<HTMLDivElement>(null);
     const isDragging = useRef(false);
@@ -2621,7 +2717,7 @@ const BottomSkillGrid = ({ trees, uiSettings, onHoverSkill, onClickSkill, onCont
     const scrollLeft = useRef(0);
 
     const handleWheel = (e: React.WheelEvent) => { if (scrollRef.current) scrollRef.current.scrollLeft += e.deltaY; };
-    const isEditorActive = uiSettings?.enableEditorMode || false;
+
     const handleMouseDown = (e: React.MouseEvent) => {
         if (!scrollRef.current) return;
         isDragging.current = true;
@@ -2629,24 +2725,15 @@ const BottomSkillGrid = ({ trees, uiSettings, onHoverSkill, onClickSkill, onCont
         startX.current = e.pageX - scrollRef.current.offsetLeft;
         scrollLeft.current = scrollRef.current.scrollLeft;
     };
-
     const handleMouseMove = (e: React.MouseEvent) => {
         if (!isDragging.current || !scrollRef.current) return;
         e.preventDefault();
         const x = e.pageX - scrollRef.current.offsetLeft;
-        const walk = (x - startX.current) * 1.5; // Multiplicador de velocidade
-
-        // Se moveu mais que 5 pixels, considera que está arrastando (evita cliques acidentais)
-        if (Math.abs(walk) > 5) {
-            hasDragged.current = true;
-        }
+        const walk = (x - startX.current) * 1.5;
+        if (Math.abs(walk) > 5) hasDragged.current = true;
         scrollRef.current.scrollLeft = scrollLeft.current - walk;
     };
-
-    const handleMouseUp = () => {
-        isDragging.current = false;
-    };
-
+    const handleMouseUp = () => { isDragging.current = false; };
     const handleMouseLeave = () => {
         isDragging.current = false;
         onHoverSkill(null);
@@ -2665,19 +2752,20 @@ const BottomSkillGrid = ({ trees, uiSettings, onHoverSkill, onClickSkill, onCont
             {trees.map((tree, index) => {
                 const isLocked = tree.treeRequirements && tree.treeRequirements.some(req => req.isMet === false);
                 const hideName = isLocked && (uiSettings?.hideLockedTreeNames ?? true);
-                const displayTreeName = hideName ? "????" : (tree.displayName || tree.name).toUpperCase();
+
+                const resolvedTreeName = resolveText(tree.displayName || tree.name, isEditorMode);
+                const displayTreeName = hideName ? "????" : resolvedTreeName.toUpperCase();
 
                 return (
                     <div key={`${tree.name}-${index}`} className={`bottom-grid-item ${isLocked ? 'bottom-locked' : ''}`}
                         onMouseEnter={() => !isDragging.current && onHoverSkill(tree.name)}
                         onClick={(e) => {
-                            // Ignora o clique se o usuário estava arrastando a barra
                             if (hasDragged.current) {
                                 e.preventDefault();
                                 e.stopPropagation();
                                 return;
                             }
-                            if (!isLocked || isEditorActive) onClickSkill(tree.name);
+                            if (!isLocked || isEditorMode) onClickSkill(tree.name);
                         }}
                         onContextMenu={e => e.preventDefault()}
                         onMouseUp={(e) => {
@@ -2721,8 +2809,6 @@ const LevelUpModal = ({ trees, settings, rules, currentLevel, pendingLevelUps, o
         let maxSpend = 0;
         let maxCap = 100;
 
-        // O currentLevel recebido do C++ é o nível ANTES do level up (ex: Level 1).
-        // Se temos 6 níveis pendentes, devemos processar os leveis 2, 3, 4, 5, 6 e 7.
         const startLevel = currentLevel + 1;
         const endLevel = currentLevel + pendingLevelUps;
 
@@ -2734,7 +2820,6 @@ const LevelUpModal = ({ trees, settings, rules, currentLevel, pendingLevelUps, o
             if ((eff.skillCap || 100) > maxCap) maxCap = eff.skillCap || 100;
         }
 
-        // Para as regras de cap e afins baseadas no level atual do player
         const currentEff = getEffectiveSettings(settings, rules, currentLevel);
 
         return {
@@ -2808,7 +2893,7 @@ const LevelUpModal = ({ trees, settings, rules, currentLevel, pendingLevelUps, o
                                     className={`level-up-category-btn ${activeCategory === cat ? 'active' : ''}`}
                                     onClick={() => setActiveCategory(cat)}
                                 >
-                                    {cat === "All" ? t('common.all').toUpperCase() : cat.toUpperCase()}
+                                    {cat === "All" ? t('common.all').toUpperCase() : resolveText(cat, false).toUpperCase()}
                                 </button>
                             ))}
                         </div>
@@ -2819,10 +2904,12 @@ const LevelUpModal = ({ trees, settings, rules, currentLevel, pendingLevelUps, o
                                 const cap = tree.cap || currentCapEffective.skillCap || 100;
                                 const isCapped = (tree.currentLevel + allocated) >= cap;
 
+                                const resolvedTreeName = resolveText(tree.displayName || tree.name, false);
+
                                 return (
                                     <div className="allocation-item" key={tree.name}>
                                         <div className="alloc-info">
-                                            <span className="alloc-name">{(tree.displayName || tree.name).toUpperCase()}</span>
+                                            <span className="alloc-name">{resolvedTreeName.toUpperCase()}</span>
                                             <div className="alloc-level-wrapper">
                                                 <span className={`alloc-level ${isCapped ? 'capped-text' : ''}`}>
                                                     {tree.currentLevel}
@@ -2904,7 +2991,7 @@ const LevelUpModal = ({ trees, settings, rules, currentLevel, pendingLevelUps, o
     );
 };
 
-const ConfirmPerkModal = ({ perkName, cost, onConfirm, onCancel }: { perkName: string, cost: number, onConfirm: () => void, onCancel: () => void }) => {
+const ConfirmPerkModal = ({ perkName, cost, customCosts, customResources, onConfirm, onCancel }: { perkName: string, cost: number, customCosts?: CustomCost[], customResources: CustomResource[], onConfirm: () => void, onCancel: () => void }) => {
     const plural = cost > 1 ? 's' : '';
     return (
         <div className="skyrim-modal-overlay">
@@ -2912,6 +2999,14 @@ const ConfirmPerkModal = ({ perkName, cost, onConfirm, onCancel }: { perkName: s
                 <h2>{t('unlock_perk.title')}</h2>
                 <div className="tooltip-divider" style={{ width: '100%', marginBottom: '15px' }}></div>
                 <p>{t('unlock_perk.message', { cost, plural, perkName })}</p>
+                {customCosts && customCosts.length > 0 && (
+                    <div style={{ marginBottom: '15px' }}>
+                        {customCosts.map(c => {
+                            const res = customResources.find(r => r.id === c.resourceId);
+                            return <p key={c.resourceId} style={{ margin: '5px 0', fontSize: '1.1rem', color: '#ffb74d' }}>- {c.amount}x {res ? resolveText(res.name, false) : c.resourceId}</p>
+                        })}
+                    </div>
+                )}
                 <div className="modal-actions">
                     <button className="modal-btn yes-btn" onClick={onConfirm}>{t('common.yes')}</button>
                     <button className="modal-btn no-btn" onClick={onCancel}>{t('common.no')}</button>
@@ -2921,8 +3016,8 @@ const ConfirmPerkModal = ({ perkName, cost, onConfirm, onCancel }: { perkName: s
     );
 };
 
-const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, onSave, onClose, onRequestBrowse }: {
-    node: Partial<PerkNode>, availableTrees: string[], formLists: Record<string, AvailablePerk[]>, availableReqs: RequirementDef[], onSave: (n: PerkNode) => void,
+const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, customResources, onSave, onClose, onRequestBrowse }: {
+    node: Partial<PerkNode>, availableTrees: string[], formLists: Record<string, AvailablePerk[]>, availableReqs: RequirementDef[], customResources: CustomResource[], onSave: (n: PerkNode) => void,
     onClose: (currentTreeName?: string) => void, onRequestBrowse: (field: string) => void
 }) => {
     const [formData, setFormData] = useState<Partial<PerkNode>>(node);
@@ -3051,6 +3146,33 @@ const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, onSav
         setFormData({ ...formData, nextRanks: ranks });
     };
 
+    // Funções para controle do custo
+    const addCustomCost = () => setFormData(p => ({ ...p, customCosts: [...(p.customCosts || []), { resourceId: customResources[0]?.id || '', amount: 1 }] }));
+    const updateCustomCost = (idx: number, field: string, val: any) => {
+        setFormData(p => {
+            const costs = [...(p.customCosts || [])];
+            costs[idx] = { ...costs[idx], [field]: val };
+            return { ...p, customCosts: costs };
+        });
+    };
+    const removeCustomCost = (idx: number) => setFormData(p => ({ ...p, customCosts: (p.customCosts || []).filter((_, i) => i !== idx) }));
+
+    const addRankCustomCost = (rIdx: number) => {
+        const ranks = [...(formData.nextRanks || [])];
+        ranks[rIdx].customCosts = [...(ranks[rIdx].customCosts || []), { resourceId: customResources[0]?.id || '', amount: 1 }];
+        setFormData({ ...formData, nextRanks: ranks });
+    };
+    const updateRankCustomCost = (rIdx: number, idx: number, field: string, val: any) => {
+        const ranks = [...(formData.nextRanks || [])];
+        ranks[rIdx].customCosts[idx] = { ...ranks[rIdx].customCosts[idx], [field]: val };
+        setFormData({ ...formData, nextRanks: ranks });
+    };
+    const removeRankCustomCost = (rIdx: number, idx: number) => {
+        const ranks = [...(formData.nextRanks || [])];
+        ranks[rIdx].customCosts = ranks[rIdx].customCosts.filter((_, i) => i !== idx);
+        setFormData({ ...formData, nextRanks: ranks });
+    };
+
     const handleSave = () => {
         if (!formData.id) formData.id = `node_${Date.now()}`;
         if (!formData.perk) return alert(t('perk_editor.alert_select_native'));
@@ -3097,6 +3219,24 @@ const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, onSav
                             <label>{t('perk_editor.cost')} <input type="number" name="perkCost" value={formData.perkCost || 1} onChange={handleChange} min={0} /></label>
                         </div>
 
+                        <div className="dynamic-list-container" style={{ marginTop: '20px', background: 'rgba(255,152,0,0.1)', padding: '10px', borderLeft: '3px solid #ffb74d' }}>
+                            <h4 style={{ color: '#ffb74d', marginBottom: '5px' }}>Custom Costs</h4>
+                            {formData.customCosts?.map((cost, idx) => (
+                                <div key={idx} style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                    <CustomSelect
+                                        options={[{ value: '', label: t('common.select') }, ...customResources.map(r => ({ value: r.id, label: resolveText(r.name, true) }))]}
+                                        value={cost.resourceId}
+                                        onChange={val => updateCustomCost(idx, 'resourceId', val)}
+                                        width="200px"
+                                        disableSearch={true}
+                                    />
+                                    <input type="number" value={cost.amount} onChange={e => updateCustomCost(idx, 'amount', Number(e.target.value))} style={{ width: '80px' }} />
+                                    <button className="delete-btn" onClick={() => removeCustomCost(idx)}>X</button>
+                                </div>
+                            ))}
+                            <button className="add-btn" onClick={addCustomCost} style={{ width: '200px', padding: '5px' }}>+ Add Custom Cost</button>
+                        </div>
+
                         <div className="dynamic-list-container" style={{ marginTop: '20px' }}>
                             <h4 style={{ color: '#ffd700', marginBottom: '5px' }}>{t('perk_editor.reqs_rank_1')}</h4>
                             {formData.requirements?.map((req, idx) => (
@@ -3117,11 +3257,15 @@ const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, onSav
 
                             {formData.nextRanks && formData.nextRanks.map((rank, idx) => (
                                 <div key={idx} className="dynamic-card" style={{ marginBottom: '10px', position: 'relative' }}>
+
+                                    {/* CABEÇALHO DO RANK */}
                                     <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '10px' }}>
                                         <strong style={{ color: '#4dd0e1' }}>{t('perk_editor.rank_label')} {idx + 2}:</strong>
                                         <span>{rank.name}</span>
                                         <button className="delete-btn" style={{ position: 'absolute', right: '10px', top: '10px' }} onClick={() => removeRank(idx)}>X</button>
                                     </div>
+
+                                    {/* PROPRIEDADES DO RANK */}
                                     <div className="settings-grid">
                                         <label>{t('perk_editor.base_engine')}
                                             <button className="form-selector-trigger-btn" onClick={() => setSelectingFormTarget(idx.toString())}>
@@ -3138,6 +3282,8 @@ const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, onSav
                                             />
                                         </label>
                                     </div>
+
+                                    {/* REQUISITOS DO RANK */}
                                     <div style={{ marginTop: '10px' }}>
                                         {rank.requirements?.map((req, rIdx) => (
                                             <RequirementInputRow
@@ -3153,7 +3299,28 @@ const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, onSav
                                         ))}
                                         <button className="add-btn" onClick={() => addRankReq(idx)} style={{ padding: '5px', marginTop: '10px', width: '200px' }}>{t('perk_editor.rank_req_btn')}</button>
                                     </div>
-                                </div>
+
+                                    {/* === CUSTOM COSTS AJUSTADO (AGORA DENTRO DO PAI DYNAMIC-CARD) === */}
+                                    <div style={{ marginTop: '10px', background: 'rgba(255,152,0,0.1)', padding: '10px', borderLeft: '3px solid #ffb74d' }}>
+                                        <h5 style={{ color: '#ffb74d', margin: '0 0 5px 0' }}>Custom Costs</h5>
+                                        {rank.customCosts?.map((cost, cIdx) => (
+                                            <div key={cIdx} style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '5px' }}>
+                                                <CustomSelect
+                                                    options={[{ value: '', label: t('common.select') }, ...customResources.map(r => ({ value: r.id, label: resolveText(r.name, true) }))]}
+                                                    value={cost.resourceId}
+                                                    onChange={val => updateRankCustomCost(idx, cIdx, 'resourceId', val)}
+                                                    width="200px"
+                                                    disableSearch={true}
+                                                />
+                                                <input type="number" value={cost.amount} onChange={e => updateRankCustomCost(idx, cIdx, 'amount', Number(e.target.value))} style={{ width: '80px' }} />
+                                                <button className="delete-btn" onClick={() => removeRankCustomCost(idx, cIdx)}>X</button>
+                                            </div>
+                                        ))}
+                                        <button className="add-btn" onClick={() => addRankCustomCost(idx)} style={{ padding: '5px', width: '200px' }}>+ Add Custom Cost</button>
+                                    </div>
+                                    {/* ================================================================ */}
+
+                                </div> /* <-- FECHAMENTO DO DYNAMIC-CARD */
                             ))}
 
                             <button className="add-btn" onClick={addManualRank} style={{ marginTop: '15px', width: '100%', padding: '10px', border: '1px dashed #4dd0e1', background: 'rgba(77, 208, 225, 0.1)' }}>
@@ -3255,6 +3422,7 @@ function App() {
     const [alertMessage, setAlertMessage] = useState<{ title: string, message: string } | null>(null);
     const [, setIsLangLoading] = useState(false);
     const hoverDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [customResources, setCustomResources] = useState<CustomResource[]>([]);
 
     const categories = settings?.categories && settings.categories.length > 0
         ? ["All", ...settings.categories]
@@ -3354,16 +3522,12 @@ function App() {
             (window as any).saveUISettings(JSON.stringify(newUISettings));
         }
 
-        if (newUISettings.language !== currentLang) {
-            loadLanguage(newUISettings.language);
-        }
-
         setIsEditingUISettings(false);
 
         if (!newUISettings.enableEditorMode) {
             setIsEditorMode(false);
         }
-    }, [currentLang, loadLanguage]);
+    }, []);
 
     const dragStart = useRef({ x: 0, y: 0 });
     const isDraggingCarousel = useRef(false);
@@ -3543,28 +3707,16 @@ function App() {
                 setIsLoaded(false);
                 return;
             }
-            console.log(`[PrismaUI] Dados recebidos. Level: ${data.player.level}, MenuOpen: ${data.player.isLevelUpMenuOpen}`);
+            
 
             if (data.fallbackTranslation && Object.keys(data.fallbackTranslation).length > 0) {
                 addTranslation('en', data.fallbackTranslation);
             }
 
-            if (data.uiSettings?.language) {
-                const langFromSettings = data.uiSettings.language;
-
-                if (data.activeTranslation && Object.keys(data.activeTranslation).length > 0) {
-                    addTranslation(langFromSettings, data.activeTranslation);
-                    console.log(`Tradução inicial carregada via payload: ${langFromSettings}`);
-                }
-                else if (langFromSettings !== 'en' && !hasTranslation(langFromSettings)) {
-                    console.log(`Solicitando tradução tardia para: ${langFromSettings}`);
-                    if (typeof (window as any).requestLocalization === 'function') {
-                        (window as any).requestLocalization(langFromSettings);
-                    }
-                }
-
-                setLanguage(langFromSettings);
-                setCurrentLang(langFromSettings);
+            if (data.activeTranslation && Object.keys(data.activeTranslation).length > 0) {
+                addTranslation('NSM_Language', data.activeTranslation);
+                setLanguage('NSM_Language');
+                setCurrentLang('NSM_Language');
             }
             if (data.player && data.trees) {
                 console.log(`[PrismaUI] Dados carregados. Jogador: ${data.player.name}, Level Atual: ${data.player.level}`);
@@ -3574,6 +3726,7 @@ function App() {
                 if (data.availableRequirements) setAvailableReqs(data.availableRequirements);
                 if (data.formLists) setFormLists(data.formLists);
                 if (data.availableLanguages) setAvailableLanguages(data.availableLanguages);
+                if (data.customResources) setCustomResources(data.customResources);
                 setIsLoaded(false);
                 setIsExiting(false);
 
@@ -3637,6 +3790,18 @@ function App() {
         return () => window.removeEventListener('updateSkills', handleUpdateSkills);
     }, []);
 
+    const handleSaveResources = useCallback((res: CustomResource[]) => {
+        setCustomResources(res);
+        if (typeof (window as any).saveResources === 'function') {
+            (window as any).saveResources(JSON.stringify(res));
+        }
+    }, []);
+    const handleDeleteResource = useCallback((id: string) => {
+        if (typeof (window as any).deleteResource === 'function') {
+            (window as any).deleteResource(JSON.stringify({ id }));
+        }
+    }, []);
+
     const updateNodePosition = useCallback((treeName: string, nodeId: string, x: number, y: number) => {
         setSkillTrees(currentTrees => currentTrees.map(tree => {
             if (tree.name !== treeName) return tree;
@@ -3668,6 +3833,7 @@ function App() {
     const handleNodeClick = useCallback((node: PerkNode) => {
         if (isEditorMode) return;
 
+        let targetNodeData: any = node;
         let targetPerkId = node.perk;
         let targetCost = node.perkCost || 1;
         let canUnlockTarget = node.canUnlock;
@@ -3677,6 +3843,7 @@ function App() {
         if (node.isUnlocked && node.nextRanks && node.nextRanks.length > 0) {
             const nextRank = node.nextRanks.find(r => !r.isUnlocked);
             if (nextRank) {
+                targetNodeData = nextRank;
                 targetPerkId = nextRank.perk;
                 targetCost = nextRank.perkCost || 1;
                 canUnlockTarget = nextRank.canUnlock;
@@ -3686,14 +3853,25 @@ function App() {
         }
 
         if (canUnlockTarget && !isTargetUnlocked && playerData) {
-            if (playerData.perkPoints >= targetCost) {
-                setConfirmingPerk({ ...node, name: targetName, perk: targetPerkId, perkCost: targetCost });
+            let canAfford = playerData.perkPoints >= targetCost;
+
+            if (canAfford && targetNodeData.customCosts) {
+                for (const cost of targetNodeData.customCosts) {
+                    const currentAmt = playerData.resourceValues?.[cost.resourceId] || 0;
+                    if (currentAmt < cost.amount) {
+                        canAfford = false;
+                        break;
+                    }
+                }
+            }
+
+            if (canAfford) {
+                setConfirmingPerk({ ...node, name: targetName, perk: targetPerkId, perkCost: targetCost, customCosts: targetNodeData.customCosts });
             } else {
-                // NOVO: Jogador não tem pontos suficientes!
-                playSound('UIMenuCancelSD'); // Toca o som de recusa
+                playSound('UIMenuCancelSD');
                 setAlertMessage({
                     title: t('common.warning', { defaultValue: 'Aviso' }),
-                    message: t('unlock_perk.insufficient_points', { defaultValue: 'Você não possui pontos de habilidade suficientes para desbloquear este Perk.' })
+                    message: t('unlock_perk.insufficient_points', { defaultValue: 'Você não possui recursos suficientes para desbloquear este Perk.' })
                 });
             }
         }
@@ -3849,7 +4027,7 @@ function App() {
 
     return (
         <div className={`app-container ${isLoaded ? 'loaded' : ''} ${isExiting ? 'exiting' : ''} ${uiSettings?.performanceMode ? 'performance-mode' : ''}`}>
-            {playerData && <PlayerHeader player={playerData} />}
+            {playerData && <PlayerHeader player={playerData} customResources={customResources} />}
 
             {uiSettings?.enableEditorMode && (
                 <div className="editor-toolbar">
@@ -3909,6 +4087,7 @@ function App() {
                                     onSelect={handleCarouselSkillSelect}
                                     onContextMenu={handleTreeContextMenu}
                                     isForcedHover={isHovered}
+                                    isEditorMode={isEditorMode}
                                 />
                             </div>
                         );
@@ -3936,6 +4115,7 @@ function App() {
                         onHoverSkill={handleSnapToSkill}
                         onClickSkill={handleBottomSkillSelect}
                         onContextMenu={handleTreeContextMenu}
+                        isEditorMode={isEditorMode}
                     />
                 </div>
             )}
@@ -3960,6 +4140,7 @@ function App() {
                         onHoverSkill={handleSnapToSkill}
                         onClickSkill={handleBottomSkillSelect}
                         onContextMenu={handleTreeContextMenu}
+                        isEditorMode={isEditorMode}
                     />
                 </div>
             )}
@@ -3981,6 +4162,8 @@ function App() {
                     onTreeContextMenu={handleTreeContextMenu}
                     uiSettings={uiSettings}
                     onLegendary={handleLegendaryRequest}
+                    playerData={playerData}            
+                    customResources={customResources}
                     onSlideChange={(name) => {
                         const index = filteredTrees.findIndex(t => t.name === name);
                         if (index !== -1 && emblaApi) {
@@ -3997,6 +4180,8 @@ function App() {
                     cost={confirmingPerk.perkCost || 1}
                     onConfirm={handleUnlockPerkConfirm}
                     onCancel={() => setConfirmingPerk(null)}
+                    customResources={customResources}
+                    customCosts={confirmingPerk.customCosts}
                 />
             )}
 
@@ -4016,10 +4201,14 @@ function App() {
                 <SettingsModal
                     settings={settings}
                     rules={rules}
+                    formLists={formLists}
                     onClose={() => setIsEditingSettings(false)}
                     onSaveSettings={handleSaveSettings}
                     onSaveRules={handleSaveRules}
                     onResetAllPerks={handleResetAllRequest}
+                    customResources={customResources}
+                    onSaveResources={handleSaveResources}
+                    onDeleteResource={handleDeleteResource}
                 />
             )}
 
@@ -4100,7 +4289,6 @@ function App() {
             {isEditingUISettings && uiSettings && (
                 <UISettingsModal
                     settings={uiSettings}
-                    availableLanguages={availableLanguages}
                     onClose={() => setIsEditingUISettings(false)}
                     onSave={handleSaveUISettings}
                 />

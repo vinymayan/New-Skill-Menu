@@ -33,7 +33,8 @@
     "has": "HAS",
     "not": "NOT",
     "warning": "Warning",
-    "cw": "CW"
+    "cw": "CW",
+    "ok": "OK"
   },
   "header": {
     "name": "NAME",
@@ -47,7 +48,8 @@
     "stamina": "STAMINA",
     "plugin": "PLUGIN",
     "form_id": "FORM ID",
-    "editor_id": "EDITOR ID"
+    "editor_id": "EDITOR ID",
+    "resources": "RESOURCES"
   },
   "browser": {
     "title": "FILE BROWSER",
@@ -68,7 +70,17 @@
       "base": "BASE",
       "rules": "RULES",
       "categories": "CATEGORIES",
-      "codes": "CODES"
+      "codes": "CODES",
+      "resources": "RESOURCES"
+    },
+    "resources": {
+      "desc": "Create custom Globals that will serve as Currency when buying Perks.",
+      "unique_id": "Unique ID:",
+      "display_name": "Display Name:",
+      "glob_id": "Glob ID:",
+      "select_glob": "Select a Global Variable",
+      "delete_confirm": "Permanently remove this resource?",
+      "add_btn": "+ ADD RESOURCE"
     },
     "base": {
       "use_dynamic_cap": "Use Dynamic Skill Cap",
@@ -171,6 +183,8 @@
     "alert_select_native": "Please select a native Skill/Perk first!",
     "new_manual_rank_name": "New Manual Rank",
     "move_tree_hint": "Shift + Drag background to move the whole tree",
+    "custom_costs": "CUSTOM COSTS",
+    "add_custom_cost": "+ ADD CUSTOM COST",
     "context": {
       "connect": "Connect with another Perk",
       "create_connected": "Create new connected Perk",
@@ -243,7 +257,8 @@
     "requirements_label": "Requirements:",
     "logic_or_title": "Logic: OR (Matches if this OR next is true)",
     "logic_and_title": "Logic: AND (Must match)",
-    "must_not_have": "Must NOT Have"
+    "must_not_have": "Must NOT Have",
+    "costs_label": "Costs:"
   },
   "editor_toolbar": {
     "mode_btn": "EDITOR MODE",

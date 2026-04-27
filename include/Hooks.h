@@ -1,7 +1,7 @@
-#pragma once
+Ôªø#pragma once
 #include "Prisma.h"
 namespace Hooks {
-    // Nossa classe que ir· "ouvir" sempre que o Skyrim tentar abrir ou fechar um menu
+    // Nossa classe que ir√° "ouvir" sempre que o Skyrim tentar abrir ou fechar um menu
     class MenuInterceptor : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
     public:
         static MenuInterceptor* GetSingleton() {
@@ -29,9 +29,9 @@ public:
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::info("Player subiu para o nÌvel {}. Iniciando scan de regras para atores prÛximos.", a_event->newLevel);
+        logger::info("Player subiu para o n√≠vel {}. Iniciando scan de regras para atores pr√≥ximos.", a_event->newLevel);
 
-        // 1. Aplicar regras ao prÛprio Player
+        // 1. Aplicar regras ao pr√≥prio Player
         auto player = RE::PlayerCharacter::GetSingleton();
         if (player) {
 
@@ -42,7 +42,7 @@ public:
     }
 
     static void Register() {
-        // CORRE«√O: Usar a fonte dedicada definida em LevelIncrease.h, n„o o ScriptEventSourceHolder
+        // CORRE√á√ÉO: Usar a fonte dedicada definida em LevelIncrease.h, n√£o o ScriptEventSourceHolder
         auto eventSource = RE::LevelIncrease::GetEventSource();
         if (eventSource) {
             eventSource->AddEventSink(GetSingleton());
@@ -53,3 +53,4 @@ public:
         }
     }
 };
+

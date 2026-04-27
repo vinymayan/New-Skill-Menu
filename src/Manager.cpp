@@ -39,6 +39,10 @@ void Manager::PopulateAllLists() {
         return shout != nullptr;
         });
 
+    PopulateList<RE::TESGlobal>("Global", [](RE::TESGlobal* glob) -> bool {
+        return glob != nullptr;
+        });
+
 
     /*PopulateList<RE::SpellItem>("Spell");
     PopulateList<RE::TESNPC>("NPC");

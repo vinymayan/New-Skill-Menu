@@ -28,12 +28,13 @@
     "default": "Padrão",
     "base": "Base",
     "no_items_found": "Nenhum item encontrado.",
-    "select_magic_school": "Escola de Magia...",
+    "select_magic_school": "Selecionar Escola...",
     "search_short": "Pesquisar...",
     "has": "TEM",
     "not": "NÃO",
     "warning": "Aviso",
-    "cw": "Carga"
+    "cw": "Carga",
+    "ok": "OK"
   },
   "header": {
     "name": "NOME",
@@ -47,7 +48,8 @@
     "stamina": "VIGOR",
     "plugin": "PLUGIN",
     "form_id": "FORM ID",
-    "editor_id": "EDITOR ID"
+    "editor_id": "EDITOR ID",
+    "resources": "RECURSOS"
   },
   "browser": {
     "title": "NAVEGADOR DE ARQUIVOS",
@@ -68,7 +70,17 @@
       "base": "BASE",
       "rules": "REGRAS",
       "categories": "CATEGORIAS",
-      "codes": "CÓDIGOS"
+      "codes": "CÓDIGOS",
+      "resources": "RECURSOS"
+    },
+    "resources": {
+      "desc": "Crie Globais personalizadas que servirão como Moeda ao comprar Perks.",
+      "unique_id": "ID Único:",
+      "display_name": "Nome de Exibição:",
+      "glob_id": "Glob ID:",
+      "select_glob": "Selecione uma Variável Global",
+      "delete_confirm": "Remover permanentemente este recurso?",
+      "add_btn": "+ ADICIONAR RECURSO"
     },
     "base": {
       "use_dynamic_cap": "Usar Limite de Habilidade Dinâmico (Dynamic Cap)",
@@ -82,8 +94,8 @@
       "skill_points_per_level": "Pontos de Habilidade/Nível:",
       "max_spendable": "Máx. de Pontos Gastáveis/Nível:",
       "reset_all_btn": "⚠ RESETAR TODOS OS PERKS (REEMBOLSAR PONTOS)",
-      "apply_vanilla_initial": "Aplicar Níveis Padrões Iniciais em Arvores quando iniciar novo jogo?",
-      "carry_weight_title": "CONFIGURAÇÕES DE CAPACIDADE DE CARGA (CARRY WEIGHT)",
+      "apply_vanilla_initial": "Nível base da árvore em Novo Jogo? (Desative se usar Overhauls de Raça)",
+      "carry_weight_title": "CONFIGURAÇÕES DE CAPACIDADE DE CARGA",
       "cw_method": "Como ganhar Capacidade de Carga?",
       "cw_method_none": "Não ganhar",
       "cw_method_auto": "Automático (Independente do Atributo)",
@@ -111,12 +123,12 @@
       "add_btn": "ADICIONAR"
     },
     "codes": {
-      "desc": "Criar códigos resgatáveis.",
+      "desc": "Criar códigos resgatáveis. Defina recompensas ou marque como 'Código de Editor' para desbloquear o layout.",
       "code_placeholder": "DIGITE O CÓDIGO",
       "default_code": "NOVO",
       "max_uses": "Usos Máximos (-1 para infinito):",
       "is_editor": "É Código de Editor?",
-      "rewards_title": "RECOMPENSAS",
+      "rewards_title": "RECOMPENSAS (Deixe vazio se não houver)",
       "add_code": "+ ADICIONAR CÓDIGO"
     }
   },
@@ -125,7 +137,7 @@
     "edit_tree": "EDITAR ÁRVORE",
     "new_title": "NOVA ÁRVORE",
     "internal_id": "ID Interno (Nome da Pasta):",
-    "id_warning": "O ID não pode ser alterado.",
+    "id_warning": "O ID não pode ser alterado para evitar problemas de sincronização de pastas.",
     "display_name": "Nome de Exibição:",
     "category": "Categoria:",
     "base_color": "Cor Base:",
@@ -140,7 +152,7 @@
     "exp_formula": "Fórmula de Experiência",
     "requirements_title": "Requisitos para Desbloquear Árvore",
     "new_req_btn": "+ NOVO REQUISITO",
-    "create_instruction": "Digite o ID Interno para a nova árvore:",
+    "create_instruction": "Digite o ID Interno para a nova árvore (Sem espaços, Ex: MagiaDeSangue):",
     "export_zip": "EXPORTAR ZIP",
     "export_zip_tooltip": "Salva em Data/PrismaUI/Exports",
     "use_mult": "Uso Mult:",
@@ -170,7 +182,9 @@
     "connecting_overlay": "Selecione um perk para conectar, ou clique num conectado para desconectar. (Botão Direito para cancelar)",
     "alert_select_native": "Selecione uma Skill/Perk nativa primeiro!",
     "new_manual_rank_name": "Novo Rank Manual",
-    "move_tree_hint": "Shift + Arrastar para mover a árvore inteira",
+    "move_tree_hint": "Shift + Arrastar fundo para mover a árvore inteira",
+    "custom_costs": "CUSTOS PERSONALIZADOS",
+    "add_custom_cost": "+ ADICIONAR CUSTO PERSONALIZADO",
     "context": {
       "connect": "Conectar com outro Perk",
       "create_connected": "Criar novo Perk conectado",
@@ -181,25 +195,25 @@
   "legendary": {
     "title": "TORNAR LENDÁRIO",
     "btn_text": "LENDÁRIO",
-    "confirm_message": "Tem certeza de que deseja tornar {treeName} Lendária?\n\nIsso resetará o nível para {resetLevel} e removerá os perks.",
+    "confirm_message": "Tem certeza de que deseja tornar {treeName} Lendária?\n\nIsso resetará o nível da habilidade para {resetLevel}, removerá todos os perks nesta árvore e reembolsará seus pontos de perk.",
     "tooltip_req": "Requer Nível {hardCap}"
   },
   "reset_all": {
     "title": "RESETAR TODOS OS PERKS",
-    "confirm_message": "Tem certeza? Isso removerá todos os perks aprendidos."
+    "confirm_message": "Tem certeza de que deseja resetar TODOS os perks de TODAS as árvores?\n\nIsso removerá todos os perks aprendidos e reembolsará os pontos gastos. Os níveis de habilidade NÃO serão resetados."
   },
   "level_up": {
     "title": "SUBIU DE NÍVEL",
     "allocate": "ALOCAR HABILIDADES ({points} RESTANTES)",
     "choose_attr": "ESCOLHER ATRIBUTO",
-    "confirm_btn": "CONFIRMAR",
-    "cap_reached": "Limite Atingido",
-    "cw_bonus_tooltip": "+{amount} de Carga",
+    "confirm_btn": "CONFIRMAR NÍVEL",
+    "cap_reached": "Limite de Habilidade Atingido",
+    "cw_bonus_tooltip": "+{amount} de Capacidade de Carga",
     "select_attributes": "SELECIONE OS ATRIBUTOS"
   },
   "unlock_perk": {
     "title": "DESBLOQUEAR PERK",
-    "message": "Gastar {cost} ponto{plural} para desbloquear {perkName}?",
+    "message": "Você deseja gastar {cost} ponto{plural} de perk para desbloquear {perkName}?",
     "cost_tag": "Custo: {cost} Ponto(s)",
     "acquired": "ADQUIRIDO",
     "insufficient_points": "Você não possui pontos de habilidade suficientes para desbloquear este Perk."
@@ -209,8 +223,8 @@
     "btn_text": "⚙️ OPÇÕES DE UI",
     "hide_locked_names": "Ocultar Nomes de Árvores Bloqueadas",
     "hide_locked_bg": "Ocultar Fundos de Árvores Bloqueadas",
-    "performance_mode": "Modo Desempenho",
-    "hide_perk_names": "Ocultar Nomes dos Perks",
+    "performance_mode": "Modo Desempenho (Desativa Animações)",
+    "hide_perk_names": "Ocultar Nomes dos Perks (Vista Detalhada)",
     "enable_editor": "ATIVAR MODO EDITOR",
     "language_label": "IDIOMA",
     "column_preview_label": "Modo de Visualização da Coluna",
@@ -231,23 +245,24 @@
     "kills": "{val} Mortes Totais",
     "perk": "Possui Perk: {val}",
     "quest_completed": "Missão Concluída: {val}",
-    "spell": "Possui Magia: {val}",
-    "book_read": "Leu o Livro: {val}",
-    "item": "Possui Item: {val}",
     "location_discovered": "Local Descoberto: {val}",
     "location_cleared": "Local Limpo: {val}",
-    "faction": "Membro da Facção: {val}",
+    "faction": "Na Facção: {val}",
+    "book_read": "Livro Lido: {val}",
+    "spell": "Possui Feitiço: {val}",
+    "item": "Possui Item: {val}",
     "global": "Global: {val}",
     "locked_tree_title": "REQUISITO PARA DESBLOQUEAR",
     "boolean_base_value": "S/N Valor Base",
     "requirements_label": "Requisitos:",
     "logic_or_title": "Lógica: OU (Válido se este OU o próximo for verdadeiro)",
     "logic_and_title": "Lógica: E (Deve ser verdadeiro)",
-    "must_not_have": "NÃO DEVE ter"
+    "must_not_have": "NÃO DEVE possuir",
+    "costs_label": "Custos:"
   },
   "editor_toolbar": {
     "mode_btn": "MODO EDITOR",
-    "close_btn": "FECHAR MODO EDITOR",
+    "close_btn": "FECHAR EDITOR",
     "new_tree": "+ NOVA ÁRVORE",
     "edit_settings": "EDITAR CONFIGURAÇÕES",
     "save_changes": "SALVAR ALTERAÇÕES"
@@ -258,6 +273,6 @@
   },
   "delete_tree": {
     "title": "EXCLUIR ÁRVORE",
-    "confirm_message": "Tem certeza que deseja excluir a árvore '{treeName}'? Ela será apagada permanentemente."
+    "confirm_message": "Tem certeza que deseja excluir a árvore '{treeName}'? O arquivo .json será apagado permanentemente do disco."
   }
 }

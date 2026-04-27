@@ -1,4 +1,4 @@
-# ---------------------------------------------------- #
+ï»¿# ---------------------------------------------------- #
 #                 Required envs assert                 #
 # ---------------------------------------------------- #
 
@@ -186,12 +186,12 @@ else()
         DEPENDS ${UI_BUILD_DIR}
     )
 
-    # Define o alvo build_ui aqui para o modo Produção
+    # Define o alvo build_ui aqui para o modo ProduÃ§Ã£o
     add_custom_target(build_ui ALL DEPENDS ${UI_OUTPUT_DIR})
 
 endif()
 
-# Conecta a dependência (agora build_ui existe corretamente nos dois casos)
+# Conecta a dependÃªncia (agora build_ui existe corretamente nos dois casos)
 add_dependencies(${PROJECT_NAME} build_ui)
 
 # ---------------------------------------------------- #

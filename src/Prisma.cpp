@@ -7,9 +7,8 @@ PRISMA_UI_API::IVPrismaUI1* PrismaUI = nullptr;
 static PrismaView view;
 static bool isVisible = false;
 
-static std::map<std::string, json> localizationCache;
-static std::vector<std::string> availableLanguagesCache;
-// Variável de controle do menu de level up
+static json g_mergedLocCache;
+static bool g_locLoaded = false;
 static bool g_isLevelUpMenuOpen = false;
 static int g_pendingLevelUps = 0;
 
@@ -27,6 +26,117 @@ static bool g_rulesLoaded = false;
 
 static json g_uiSettingsCache;
 static bool g_uiSettingsLoaded = false;
+
+static json g_resourcesCache = json::array();
+static bool g_resourcesLoaded = false;
+
+static void TriggerMouseModeEvent(bool close = false) {
+    auto dispatcher = SKSE::GetModCallbackEventSource();
+    if (dispatcher) {
+        float actionValue = close ? 0.0f : 1.0f;
+        SKSE::ModCallbackEvent modEvent{
+            RE::BSFixedString("MouseMode_Trigger"),
+            RE::BSFixedString(""), 
+            actionValue,
+            nullptr
+        };
+        dispatcher->SendEvent(&modEvent);
+        logger::info("Evento MouseMode_Trigger disparado para alternar o MouseMode.");
+    }
+}
+static bool ShouldTriggerMouseMode() {
+    auto inputMgr = RE::BSInputDeviceManager::GetSingleton();
+    bool isGamepad = inputMgr && inputMgr->IsGamepadEnabled();
+
+    return isGamepad && Prisma::MouseMode;
+}
+
+void Prisma::SendKeyPress(const std::string& key) {
+    if (PrismaUI && createdView && isVisible) {
+        std::string script = fmt::format("window.dispatchEvent(new KeyboardEvent('keydown', {{ key: '{}' }}));", key);
+        PrismaUI->Invoke(view, script.c_str());
+    }
+}
+
+json GetCustomResources() {
+    // 1. Verifica se já está no cache
+    if (g_resourcesLoaded) {
+        return g_resourcesCache;
+    }
+
+    json resources = json::array();
+    std::filesystem::path dir("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Skill Trees\\Resources");
+
+    if (std::filesystem::exists(dir) && std::filesystem::is_directory(dir)) {
+        for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".json") {
+                std::ifstream file(entry.path());
+                if (file.is_open()) {
+                    try {
+                        json res = json::parse(file);
+                        resources.push_back(res);
+                    }
+                    catch (...) {}
+                }
+            }
+        }
+    }
+
+    // 2. Salva no cache
+    g_resourcesCache = resources;
+    g_resourcesLoaded = true;
+
+    return g_resourcesCache;
+}
+
+// --- Salvar recurso ---
+static void SaveResourcesFromUI(const char* jsonArgs) {
+    if (!jsonArgs) return;
+    try {
+        json incomingResources = json::parse(jsonArgs);
+        if (!incomingResources.is_array()) return;
+
+        std::string resDir = std::string("Data\\PrismaUI\\views\\") + PRODUCT_NAME + "\\Skill Trees\\Resources";
+        if (!std::filesystem::exists(resDir)) {
+            std::filesystem::create_directories(resDir);
+        }
+
+        for (auto& res : incomingResources) {
+            std::string id = res.value("id", "Unknown");
+            if (id == "Unknown") continue;
+            std::string filePath = resDir + "\\" + id + ".json";
+            std::ofstream file(filePath);
+            if (file.is_open()) {
+                file << res.dump(4);
+            }
+        }
+
+        // Invalida o cache para forçar a releitura no próximo GetCustomResources
+        g_resourcesLoaded = false;
+    }
+    catch (const std::exception& e) {
+        logger::error("Erro em SaveResourcesFromUI: {}", e.what());
+    }
+}
+
+// --- Deletar recurso ---
+static void DeleteResourceFromUI(const char* args) {
+    if (!args) return;
+    try {
+        json j = json::parse(args);
+        std::string id = j.value("id", "");
+        if (!id.empty()) {
+            std::string filePath = std::string("Data\\PrismaUI\\views\\") + PRODUCT_NAME + "\\Skill Trees\\Resources\\" + id + ".json";
+            if (std::filesystem::exists(filePath)) {
+                std::filesystem::remove(filePath);
+
+                // Invalida o cache após deletar com sucesso
+                g_resourcesLoaded = false;
+            }
+        }
+    }
+    catch (...) {}
+}
 
 static void PlayUISound(const char* soundEditorID) {
     auto audioManager = RE::BSAudioManager::GetSingleton();
@@ -207,83 +317,54 @@ static void ExportTreeFromUI(const char* jsonArgs) {
 }
 
 std::vector<std::string> GetAvailableLanguages() {
-    // Se já escaneamos a pasta antes, retorna a lista da memória
-    if (!availableLanguagesCache.empty()) {
-        return availableLanguagesCache;
+    return { "NSM_Language" };
+}
+
+
+json GetLocalizationContent() {
+    // 1. Verifica se já está na memória (Cache Hit)
+    if (g_locLoaded) {
+        return g_mergedLocCache;
     }
 
-    std::vector<std::string> langs;
-    langs.push_back("en"); // Padrão sempre presente
-
+    json merged = json::object();
     std::filesystem::path locDir = "Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Localization";
 
     if (std::filesystem::exists(locDir) && std::filesystem::is_directory(locDir)) {
         for (const auto& entry : std::filesystem::directory_iterator(locDir)) {
             if (entry.is_regular_file() && entry.path().extension() == ".json") {
-                std::string stem = entry.path().stem().string();
-                std::string stemLower = stem;
-                std::transform(stemLower.begin(), stemLower.end(), stemLower.begin(), ::tolower);
-
-                if (stemLower != "en") {
-                    langs.push_back(stem);
+                std::ifstream file(entry.path());
+                if (file.is_open()) {
+                    try {
+                        json content = json::parse(file);
+                        // Deep merge (mescla todos os arquivos em um único dicionário)
+                        merged.merge_patch(content);
+                    }
+                    catch (const std::exception& e) {
+                        logger::error("Erro de parse no idioma {}: {}", entry.path().filename().string(), e.what());
+                    }
                 }
             }
         }
     }
-
-    // Salva no cache estático
-    availableLanguagesCache = langs;
-    return availableLanguagesCache;
-}
-
-
-// 2. Melhoria na leitura do conteúdo (com log de fallback)
-json GetLocalizationContent(const std::string& langCode) {
-    // 1. Verifica se já está na memória (Cache Hit)
-    if (localizationCache.find(langCode) != localizationCache.end()) {
-        return localizationCache[langCode];
-    }
-
-    // 2. Se não estiver, carrega do disco
-    std::string fileName = langCode + ".json";
-    std::filesystem::path locDir = "Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Localization";
-    std::filesystem::path fullPath = locDir / fileName;
-
-    json content = json::object();
-
-    if (std::filesystem::exists(fullPath)) {
-        std::ifstream file(fullPath);
-        if (file.is_open()) {
-            try {
-                content = json::parse(file);
-                // 3. Salva no cache para a próxima vez
-                localizationCache[langCode] = content;
-            }
-            catch (const std::exception& e) {
-                logger::error("Erro de parse no idioma {}: {}", langCode, e.what());
-            }
-        }
-    }
     else {
-        logger::warn("Arquivo de idioma nao encontrado: {}", fullPath.string());
+        logger::warn("Diretorio de idiomas nao encontrado: {}", locDir.string());
     }
 
-    return content;
+    g_mergedLocCache = merged;
+    g_locLoaded = true;
+    return merged;
 }
 
 
 
-// Callback chamado pela UI
 static void RequestLocalizationFromUI(const char* args) {
-    if (!args) return;
-    std::string langCode = args; // O argumento é apenas a string "pt", "es", etc.
+    // 1. Lê o JSON mesclado do disco/cache
+    json content = GetLocalizationContent();
 
-    // 1. Lê o JSON do disco
-    json content = GetLocalizationContent(langCode);
-
-    // 2. Monta a resposta
+    // 2. Monta a resposta ignorando o args (agora é unificado)
     json response;
-    response["lang"] = langCode;
+    response["lang"] = "NSM_Language";
     response["data"] = content;
 
     // 3. Envia para a UI
@@ -291,6 +372,11 @@ static void RequestLocalizationFromUI(const char* args) {
         std::string script = fmt::format("window.dispatchEvent(new CustomEvent('receiveLocalization', {{ detail: {} }}));", response.dump());
         PrismaUI->Invoke(view, script.c_str());
     }
+}
+
+void Prisma::PreloadLocalization() {
+    logger::info("Pré-carregando dados de localização unificados...");
+    GetLocalizationContent();
 }
 
 bool PrismaTreeExists(const std::string& treeId) {
@@ -1455,6 +1541,9 @@ json GetLoadedSkillTreeConfigs() {
         for (const auto& entry : std::filesystem::recursive_directory_iterator(dir)) {
             if (entry.is_regular_file() && entry.path().extension() == ".json") {
                 std::string filePath = entry.path().string();
+                if (filePath.find("\\Resources\\") != std::string::npos || filePath.find("/Resources/") != std::string::npos) {
+                    continue;
+                }
                 std::error_code ec;
                 auto currentWriteTime = std::filesystem::last_write_time(entry.path(), ec);
 
@@ -1474,7 +1563,9 @@ json GetLoadedSkillTreeConfigs() {
                     if (file.is_open()) {
                         try {
                             json tree = json::parse(file);
-
+                            if (!tree.contains("nodes") && !tree.contains("isVanilla")) {
+                                continue;
+                            }
                             bool isVanilla = tree.value("isVanilla", false);
                             std::string treeName = tree.value("name", entry.path().stem().string());
 
@@ -1548,7 +1639,7 @@ json GetUISettings() {
     std::filesystem::path settingsPath("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\uisettings.json");
 
     json defaultUISettings = {
-        {"language", "en"},
+        {"language", "NSM_Language"},
         {"hideLockedTreeNames", true},
         {"hideLockedTreeBG", false},
         {"performanceMode", false},
@@ -1624,6 +1715,22 @@ std::string GetPlayerSkillsJSON() {
             }
         }
 
+        json customResources = GetCustomResources();
+        std::unordered_map<std::string, float> resourceValuesMap;
+        for (auto& res : customResources) {
+            std::string globStr = res.value("glob", "");
+            int val = 0;
+            if (!globStr.empty()) {
+                RE::FormID globID = ParseFormIDString(globStr);
+                if (globID != 0) {
+                    auto glob = RE::TESForm::LookupByID<RE::TESGlobal>(globID);
+                    if (glob) { 
+                        val = static_cast<int>(std::round(glob->value)); }
+                }
+            }
+            resourceValuesMap[res.value("id", "")] = val;
+        }
+
         // --- 1. DADOS BÁSICOS DO JOGADOR (HEADER) ---
         std::string playerName = player->GetName();
         auto avOwner = player->AsActorValueOwner();
@@ -1674,7 +1781,8 @@ std::string GetPlayerSkillsJSON() {
             {"dragonSouls", dragonSouls},
             {"title", "Dragonborn"},
             {"pendingLevelUps", g_pendingLevelUps},
-            {"isLevelUpMenuOpen", Prisma::IsLevelUpMenuOpen()}
+            {"isLevelUpMenuOpen", Prisma::IsLevelUpMenuOpen()},
+            {"resourceValues", resourceValuesMap}
         };
 
         // --- 2. COLETA DE NOVAS INFORMAÇÕES GLOBAIS PARA OS REQUISITOS ---
@@ -2144,12 +2252,10 @@ std::string GetPlayerSkillsJSON() {
         json settingsData = GetSettings();
         json rulesData = GetLevelRules();
         json uiSettingsData = GetUISettings();
-        std::string currentLangCode = uiSettingsData.value("language", "en");
-        json currentLangData = GetLocalizationContent(currentLangCode);
+        std::string currentLangCode = uiSettingsData.value("language", "NSM_Language");
+        json currentLangData = GetLocalizationContent();
         json fallbackLangData = json::object();
-        if (currentLangCode != "en") {
-            fallbackLangData = GetLocalizationContent("en");
-        }
+
 
         json availablePerks = json::array();
         for (const auto& perk : Manager::GetSingleton()->GetList("Perk")) {
@@ -2266,6 +2372,21 @@ std::string GetPlayerSkillsJSON() {
                 });
         }
 
+        json availableGlobals = json::array();
+        for (const auto& glob : Manager::GetSingleton()->GetList("Global")) {
+            uint32_t localID = (glob.formID & 0xFF000000) == 0xFE000000 ? (glob.formID & 0xFFF) : (glob.formID & 0xFFFFFF);
+
+            std::string globName = glob.name;
+            if (globName.empty()) globName = glob.editorID;
+            if (globName.empty()) globName = fmt::format("{:X}", glob.formID);
+
+            availableGlobals.push_back({
+                {"id", fmt::format("{}|{:X}", glob.pluginName, localID)},
+                {"name", globName},
+                {"editorId", glob.editorID}
+                });
+        }
+
         json availableReqs = json::array({
             //{{"id", "level"}, {"name", "Skill Level (Atual)"}},
             {{"id", "player_level"}, {"name", "Player Level"}},
@@ -2296,6 +2417,7 @@ std::string GetPlayerSkillsJSON() {
         formLists["faction"] = availableFactions;
         formLists["book_read"] = availableBooks;
         formLists["shout"] = availableShouts;
+        formLists["global"] = availableGlobals;
 
         json finalResponse = {
             {"player", playerData},
@@ -2307,7 +2429,8 @@ std::string GetPlayerSkillsJSON() {
             {"availableRequirements", availableReqs},
             {"availableLanguages", langs},
             {"activeTranslation", currentLangData},
-            {"fallbackTranslation", fallbackLangData}
+            {"fallbackTranslation", fallbackLangData},
+            {"customResources", customResources}
             
         };
 
@@ -2393,13 +2516,17 @@ static void RedeemCodeFromUI(const char* args) {
         logger::error("Erro no RedeemCode: {}", e.what());
     }
 }
-// Função para lidar com a compra do Perk vinda da UI
+
+
+
+// --- ALTERADO: Função de desbloqueio para suportar customCosts ---
 static void UnlockPerkFromUI(const char* args) {
     if (!args) return;
     try {
         json payload = json::parse(args);
         std::string perkIDStr = payload.value("id", "");
         int cost = payload.value("cost", 1);
+        json customCosts = payload.value("customCosts", json::array());
 
         RE::FormID perkID = ParseFormIDString(perkIDStr);
         if (perkID == 0) return;
@@ -2409,19 +2536,73 @@ static void UnlockPerkFromUI(const char* args) {
 
         auto perk = RE::TESForm::LookupByID<RE::BGSPerk>(perkID);
         if (perk) {
-            auto playerSkills = player->GetPlayerRuntimeData().skills;
             auto& playerRuntime = player->GetPlayerRuntimeData();
 
-            if (playerRuntime.perkCount >= cost) {
+            bool canAfford = (playerRuntime.perkCount >= cost);
+
+            json resources = GetCustomResources();
+            std::unordered_map<std::string, RE::TESGlobal*> globMap;
+
+            // Verifica se o jogador tem os recursos customizados suficientes
+            if (canAfford) {
+                for (auto& cCost : customCosts) {
+                    std::string rId = cCost.value("resourceId", "");
+                    float amt = cCost.value("amount", 0.0f);
+
+                    std::string globStr = "";
+                    for (auto& res : resources) {
+                        if (res.value("id", "") == rId) {
+                            globStr = res.value("glob", "");
+                            break;
+                        }
+                    }
+
+                    if (!globStr.empty()) {
+                        RE::FormID gID = ParseFormIDString(globStr);
+                        if (gID != 0) {
+                            auto glob = RE::TESForm::LookupByID<RE::TESGlobal>(gID);
+                            if (glob && glob->value >= amt) {
+                                globMap[rId] = glob;
+                            }
+                            else {
+                                canAfford = false; break;
+                            }
+                        }
+                        else { canAfford = false; break; }
+                    }
+                    else { canAfford = false; break; }
+                }
+            }
+
+            if (canAfford) {
                 player->AddPerk(perk);
                 playerRuntime.perkCount -= cost;
 
-                logger::info("Perk {} desbloqueado com sucesso! Custo: {}", perkIDStr, cost);
+                // Desconta recursos customizados
+                for (auto& cCost : customCosts) {
+                    std::string rId = cCost.value("resourceId", "");
+                    float amt = cCost.value("amount", 0.0f);
+                    if (globMap.count(rId)) {
+                        globMap[rId]->value -= amt;
+                    }
+                }
 
+                auto dispatcher = SKSE::GetModCallbackEventSource();
+                if (dispatcher) {
+                    SKSE::ModCallbackEvent modEvent{
+                        RE::BSFixedString("NSM_PerkAquired"),
+                        RE::BSFixedString(perkIDStr), // Passa a string do FormID (ex: Skyrim.esm|1234)
+                        static_cast<float>(perkID),   // Passa o ID Numérico bruto no float como bônus
+                        nullptr
+                    };
+                    dispatcher->SendEvent(&modEvent);
+                    logger::debug("Evento NSM_PerkAquired disparado para o perk: {}", perkIDStr);
+                }
+                logger::info("Perk {} desbloqueado com sucesso! Custo de Perks: {}", perkIDStr, cost);
                 Prisma::SendUpdateToUI();
             }
             else {
-                logger::warn("Tentativa de desbloqueio de perk sem pontos suficientes. Necessario: {}", cost);
+                logger::warn("Tentativa de desbloqueio de perk sem recursos suficientes.");
             }
         }
     }
@@ -2429,6 +2610,7 @@ static void UnlockPerkFromUI(const char* args) {
         logger::error("Erro ao desbloquear perk: {}", e.what());
     }
 }
+
 
 
 // Função para lidar com o Level Up (Escolha de Atributo)
@@ -2975,6 +3157,8 @@ void Prisma::Show() {
             PrismaUI->RegisterJSListener(currentView, "unlockPerk", [](const char* args) { UnlockPerkFromUI(args); });
             PrismaUI->RegisterJSListener(currentView, "chooseAttribute", [](const char* args) { ChooseAttributeFromUI(args); });
             PrismaUI->RegisterJSListener(currentView, "redeemCode", [](const char* args) { RedeemCodeFromUI(args); });
+            PrismaUI->RegisterJSListener(currentView, "saveResources", [](const char* args) { SaveResourcesFromUI(args); });
+            PrismaUI->RegisterJSListener(currentView, "deleteResource", [](const char* args) { DeleteResourceFromUI(args); });
             PrismaUI->RegisterJSListener(currentView, "saveSettings", [](const char* args) { SaveSettingsFromUI(args); });
             PrismaUI->RegisterJSListener(currentView, "saveUISettings", [](const char* args) { SaveUISettingsFromUI(args); });
             SendUpdateToUI();
@@ -2990,6 +3174,9 @@ void Prisma::Show() {
 
     //RE::UIBlurManager::GetSingleton()->IncrementBlurCount();
     isVisible = true;
+    if (ShouldTriggerMouseMode()) {
+        TriggerMouseModeEvent();
+    }
    
 }
 
@@ -3022,6 +3209,9 @@ void Prisma::Hide() {
             if (focusMenu) {
                 focusMenu->menuFlags.reset(RE::UI_MENU_FLAGS::kFreezeFrameBackground);
             }
+        }
+        if (ShouldTriggerMouseMode()) {
+            TriggerMouseModeEvent(true);
         }
     }
 }
@@ -3062,29 +3252,7 @@ void ApplyVanillaInitialLevels() {
     }
 }
 
-void Prisma::PreloadLocalization() {
-    logger::info("Pré-carregando dados de localização...");
 
-    // A. Escaneia a pasta e cacheia os nomes dos arquivos
-    GetAvailableLanguages();
-
-    // B. Carrega sempre o inglês (Fallback) para a memória
-    GetLocalizationContent("en");
-
-    // C. Descobre qual idioma o usuário usou por último e já carrega ele também
-    try {
-        json settings = GetUISettings();
-        std::string currentLang = settings.value("language", "en");
-
-        if (currentLang != "en") {
-            logger::info("Pré-carregando idioma do usuario: {}", currentLang);
-            GetLocalizationContent(currentLang);
-        }
-    }
-    catch (...) {
-        logger::warn("Erro ao tentar pré-carregar settings de idioma.");
-    }
-}
 
 
 

@@ -6,7 +6,9 @@ class Prisma {
     
 public:
     static inline bool createdView = false;
+    static inline bool MouseMode = false;
     bool HandleInput(RE::InputEvent* a_event);
+    static void SendKeyPress(const std::string& key);
     static void PreloadLocalization();
     static void Install();
     static void SendUpdateToUI();
