@@ -2676,7 +2676,7 @@ static void ChooseAttributeFromUI(const char* args) {
                 player->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kStamina, 999999.0f);
             }
 
-            totalExtraPerks += (perksPerLevel - 1);
+            totalExtraPerks += perksPerLevel;
         }
 
         // 2. Aplica as Skills Escolhidas (Agrupadas)

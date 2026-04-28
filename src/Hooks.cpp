@@ -109,7 +109,6 @@ struct ProcessInputQueueHook {
 
 bool OnInput(RE::InputEvent* event) { 
     if (!event) return false;
-
     auto button = event->AsButtonEvent();
     if (!button) return false;
     if (!button->IsDown()) return false;
