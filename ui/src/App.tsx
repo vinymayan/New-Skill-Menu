@@ -2315,13 +2315,15 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                                 </div>
                             )}
 
-                            {!currentData.isUnlocked && (
+                            {!currentData.isUnlocked && ((currentData.perkCost ?? 0) > 0 || (currentData.customCosts && currentData.customCosts.length > 0)) && (
                                 <div className="perk-reqs" style={{ marginTop: '5px' }}>
                                     <strong>{t('reqs.costs_label', { defaultValue: 'Costs' })}</strong>
                                     <ul>
-                                        <li className={playerData && playerData.perkPoints >= (currentData.perkCost || 1) ? 'req-met' : 'req-unmet'}>
-                                            {currentData.perkCost || 1}x {t('header.perk_points', { defaultValue: 'Perk Points' })}
-                                        </li>
+                                        {(currentData.perkCost ?? 0) > 0 && (
+                                            <li className={playerData && playerData.perkPoints >= (currentData.perkCost ?? 0) ? 'req-met' : 'req-unmet'}>
+                                                {currentData.perkCost}x {t('header.perk_points', { defaultValue: 'Perk Points' })}
+                                            </li>
+                                        )}
                                         {currentData.customCosts?.map((cost: CustomCost, i: number) => {
                                             const res = customResources?.find((r: CustomResource) => r.id === cost.resourceId);
                                             const resName = res ? resolveText(res.name, false) : cost.resourceId;
@@ -3216,7 +3218,7 @@ const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, custo
                                     <button className="browse-btn" onClick={() => onRequestBrowse('icon')}>{t('common.browse')}</button>
                                 </div>
                             </label>
-                            <label>{t('perk_editor.cost')} <input type="number" name="perkCost" value={formData.perkCost || 1} onChange={handleChange} min={0} /></label>
+                            <label>{t('perk_editor.cost')} <input type="number" name="perkCost" value={formData.perkCost ?? ''} onChange={handleChange} min={0} /></label>
                         </div>
 
                         <div className="dynamic-list-container" style={{ marginTop: '20px', background: 'rgba(255,152,0,0.1)', padding: '10px', borderLeft: '3px solid #ffb74d' }}>
@@ -3273,7 +3275,7 @@ const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, custo
                                             </button>
                                         </label>
                                         <label>{t('perk_editor.name_ui')} <input type="text" value={rank.name} onChange={e => updateRank(idx, 'name', e.target.value)} /></label>
-                                        <label>{t('perk_editor.cost')} <input type="number" value={rank.perkCost || 1} onChange={e => updateRank(idx, 'perkCost', Number(e.target.value))} /></label>
+                                        <label>{t('perk_editor.cost')} <input type="number" value={rank.perkCost ?? ''} onChange={e => updateRank(idx, 'perkCost', Number(e.target.value))} min={0} /></label>
                                         <label className="full-width" style={{ gridColumn: 'span 2' }}>{t('perk_editor.description')}
                                             <textarea
                                                 value={rank.description}
@@ -3823,7 +3825,7 @@ function App() {
 
     const handleUnlockPerkConfirm = useCallback(() => {
         if (confirmingPerk && typeof (window as any).unlockPerk === 'function') {
-            const cost = confirmingPerk.perkCost || 1;
+            const cost = confirmingPerk.perkCost ?? 0;
             playSound('UISkillsPerkSelect2D');
             (window as any).unlockPerk(JSON.stringify({ id: confirmingPerk.perk, cost }));
         }
@@ -3835,7 +3837,7 @@ function App() {
 
         let targetNodeData: any = node;
         let targetPerkId = node.perk;
-        let targetCost = node.perkCost || 1;
+        let targetCost = node.perkCost ?? 0;
         let canUnlockTarget = node.canUnlock;
         let isTargetUnlocked = node.isUnlocked;
         let targetName = node.name;
@@ -3845,7 +3847,7 @@ function App() {
             if (nextRank) {
                 targetNodeData = nextRank;
                 targetPerkId = nextRank.perk;
-                targetCost = nextRank.perkCost || 1;
+                targetCost = nextRank.perkCost ?? 0;
                 canUnlockTarget = nextRank.canUnlock;
                 isTargetUnlocked = nextRank.isUnlocked;
                 targetName = nextRank.name;
@@ -4177,7 +4179,7 @@ function App() {
             {confirmingPerk && !isEditorMode && (
                 <ConfirmPerkModal
                     perkName={confirmingPerk.name}
-                    cost={confirmingPerk.perkCost || 1}
+                    cost={confirmingPerk.perkCost ?? 0}
                     onConfirm={handleUnlockPerkConfirm}
                     onCancel={() => setConfirmingPerk(null)}
                     customResources={customResources}

@@ -17,19 +17,8 @@ namespace MenuHooks {
                     RE::GFxValue alpha(0.0);
                     a_this->uiMovie->SetVariable("_root._alpha", &alpha);
                 }
-                //a_this->menuFlags.set(RE::UI_MENU_FLAGS::kFreezeFrameBackground);
-                logger::debug("LevelUpMenu: ProcessMessage kShow recebido. MenuFlags atualizados para congelar o fundo.");
-                Prisma::SetLevelUpMenuOpen(true);
-                logger::debug("[DEBUG] Chamando SendUpdateToUI via LevelUpMenuHook (kShow)"); 
-                Prisma::SendUpdateToUI();
             }
             else if (a_message.type == RE::UI_MESSAGE_TYPE::kHide) {
-                Prisma::SetLevelUpMenuOpen(false);
-                logger::debug("[DEBUG] Chamando SendUpdateToUI via LevelUpMenuHook (kHide)"); 
-                Prisma::SendUpdateToUI();
-                //a_this->menuFlags.set(RE::UI_MENU_FLAGS::kFreezeFrameBackground);
-                //a_this->menuFlags.set(RE::UI_MENU_FLAGS::kPausesGame);
-                //return RE::UI_MESSAGE_RESULTS::kHandled;
 			}
             // Chama a função original para evitar quebrar a pilha de menus da engine
             return result;
@@ -112,6 +101,11 @@ bool OnInput(RE::InputEvent* event) {
     auto button = event->AsButtonEvent();
     if (!button) return false;
     if (!button->IsDown()) return false;
+    /*if (button->GetIDCode() == RE::BSWin32KeyboardDevice::Keys::kF3) {
+        auto player = RE::PlayerCharacter::GetSingleton();
+        player->AddSkillExperience(RE::ActorValue::kHeavyArmor, 1000.0f);
+        return true;
+    }*/
     if (!Prisma::IsHidden()) {
         auto userEvents = RE::UserEvents::GetSingleton();
         auto action = button->QUserEvent();
@@ -206,8 +200,8 @@ void Hooks::Install() {
     SKSE::AllocTrampoline(64);
     ProcessInputQueueHook::install();
     InputEventHandler::Register(OnInput);
-    //MenuHooks::StatsMenuHook::Install();
-    //MenuHooks::LevelUpMenuHook::Install();
+    MenuHooks::StatsMenuHook::Install();
+    MenuHooks::LevelUpMenuHook::Install();
     static MenuEvents menuSink;
     static ModEvents modSink;
 

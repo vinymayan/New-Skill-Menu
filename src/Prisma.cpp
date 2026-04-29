@@ -2634,6 +2634,7 @@ static void ChooseAttributeFromUI(const char* args) {
             auto playerBase = player->GetActorBase();
             if (playerBase) {
                 playerBase->actorData.level += 1;
+                playerBase->AddChange(RE::TESNPC::ChangeFlags::kBaseData);
                 logger::info("Player subiu de nivel! Novo nivel: {}", playerBase->actorData.level);
             }
             // Pega as configurações EFETIVAS baseadas na regra daquele respectivo nível
@@ -3212,6 +3213,11 @@ void Prisma::Hide() {
         }
         if (ShouldTriggerMouseMode()) {
             TriggerMouseModeEvent(true);
+        }
+        auto msgQueue = RE::UIMessageQueue::GetSingleton();
+        if (msgQueue) {
+            msgQueue->AddMessage(RE::LevelUpMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
+            msgQueue->AddMessage(RE::StatsMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
         }
     }
 }
