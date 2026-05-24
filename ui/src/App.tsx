@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, memo, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, memo, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import useEmblaCarousel from 'embla-carousel-react';
 import { SketchPicker } from 'react-color';
@@ -446,6 +446,11 @@ function getNearestNode(nodes: PerkNode[], currentId: string | null, direction: 
     });
 
     return bestCandidate;
+}
+
+
+function isSkillTreeLocked(tree?: SkillTreeData | null): boolean {
+    return !!tree?.treeRequirements?.some(req => req.isMet === false);
 }
 
 function useVisibility(rootMargin = '0px') {
@@ -1799,7 +1804,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
         keyboardSelectedNodeId?: string | null,
         onUpdateNodePosition: (t: string, n: string, x: number, y: number) => void,
         onUpdateNodes?: (t: string, nodes: PerkNode[]) => void,
-        onNodeClick?: (node: PerkNode) => void,
+        onNodeClick?: (node: PerkNode, sourceTree?: SkillTreeData) => void,
         onTreeContextMenu?: (e: React.MouseEvent, name: string) => void,
         globalSettings?: SettingsData | null,
         uiSettings?: UISettings | null,
@@ -2103,9 +2108,9 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
         } else if (isEditorMode && !connectingFrom) {
             if (!hasDraggedNode.current) setEditingNode({ node: clickedNode });
         } else if (!isEditorMode && onNodeClick) {
-            onNodeClick(clickedNode);
+            onNodeClick(clickedNode, treeData);
         }
-    }, [isEditorMode, connectingFrom, onUpdateNodes, treeData.name, treeData.nodes, onNodeClick]);
+    }, [isEditorMode, connectingFrom, onUpdateNodes, treeData, onNodeClick]);
 
     const handleTooltipMouseEnter = () => {
         if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
@@ -2383,7 +2388,7 @@ const SkillTreeDetail = ({
     onUpdateNodePosition: (t: string, n: string, x: number, y: number) => void,
     onUpdateNodes?: (t: string, nodes: PerkNode[]) => void,
     uiSettings: UISettings | null,
-    onClose: (name?: string) => void, onNodeClick?: (node: PerkNode) => void,
+    onClose: (name?: string) => void, onNodeClick?: (node: PerkNode, sourceTree?: SkillTreeData) => void,
     onTreeContextMenu: (e: React.MouseEvent, name: string) => void,
     onLegendary: (treeName: string) => void,
     onSlideChange: (name: string) => void 
@@ -2413,13 +2418,31 @@ const SkillTreeDetail = ({
         if (!emblaApi) return;
         const onSelect = () => {
             const newIndex = emblaApi.selectedScrollSnap();
+            const tree = trees[newIndex];
+
+            if (!tree) return;
+
+            if (isSkillTreeLocked(tree) && !isEditorMode) {
+                playSound('UIMenuCancelSD');
+
+                const fallbackIndex = trees.findIndex(t => !isSkillTreeLocked(t));
+                if (fallbackIndex !== -1 && fallbackIndex !== newIndex) {
+                    emblaApi.scrollTo(fallbackIndex, true);
+                    setCurrentIndex(fallbackIndex);
+                    setKeyboardNodeId(null);
+                    onSlideChange(trees[fallbackIndex].name);
+                }
+
+                return;
+            }
+
             setCurrentIndex(newIndex);
             setKeyboardNodeId(null);
-            onSlideChange(trees[newIndex].name); 
+            onSlideChange(tree.name);
         };
         emblaApi.on('select', onSelect);
         return () => { emblaApi.off('select', onSelect); };
-    }, [emblaApi, trees, onSlideChange]);
+    }, [emblaApi, trees, onSlideChange, isEditorMode]);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -2618,8 +2641,12 @@ const SkillColumn = memo(({ treeData, uiSettings, globalSettings, formLists, onS
     const displayTreeName = hideName ? "????" : resolvedTreeName.toUpperCase();
 
     const handleClick = useCallback(() => {
-        if (!isLocked || isEditorMode)
-            playSound('UISkillsForwardSD');
+        if (isLocked && !isEditorMode) {
+            playSound('UIMenuCancelSD');
+            return;
+        }
+
+        playSound('UISkillsForwardSD');
         onSelect(treeData.name);
     }, [onSelect, treeData.name, isLocked, isEditorMode]);
 
@@ -3832,8 +3859,14 @@ function App() {
         setConfirmingPerk(null);
     }, [confirmingPerk]);
 
-    const handleNodeClick = useCallback((node: PerkNode) => {
+    const handleNodeClick = useCallback((node: PerkNode, sourceTree?: SkillTreeData) => {
         if (isEditorMode) return;
+
+        const treeToCheck = sourceTree || skillTrees.find(t => t.name === selectedSkill);
+        if (isSkillTreeLocked(treeToCheck)) {
+            playSound('UIMenuCancelSD');
+            return;
+        }
 
         let targetNodeData: any = node;
         let targetPerkId = node.perk;
@@ -3877,7 +3910,7 @@ function App() {
                 });
             }
         }
-    }, [isEditorMode, playerData]);
+    }, [isEditorMode, playerData, skillTrees, selectedSkill]);
 
     const handleSaveTrees = useCallback(() => {
         if (typeof (window as any).saveSkillTrees === 'function') {
@@ -3933,9 +3966,11 @@ function App() {
             }
             else if (key === 'w' || key === 'enter') {
                 if (hoveredSkillName) {
-                    const isLocked = skillTrees.find(t => t.name === hoveredSkillName)?.treeRequirements?.some(req => req.isMet === false);
-                    if (!isLocked) {
+                    const hoveredTree = skillTrees.find(t => t.name === hoveredSkillName);
+                    if (!isSkillTreeLocked(hoveredTree)) {
                         setSelectedSkill(hoveredSkillName);
+                    } else {
+                        playSound('UIMenuCancelSD');
                     }
                 }
             }
@@ -3963,9 +3998,19 @@ function App() {
         const onSelect = () => {
             const index = emblaApi.selectedScrollSnap();
             const tree = filteredTrees[index];
-            if (tree) {
-                applyHoveredSkill(tree.name);
+
+            if (!tree) {
+                applyHoveredSkill(null);
+                return;
             }
+
+            if (isSkillTreeLocked(tree) && !isEditorMode) {
+                playSound('UIMenuCancelSD');
+                applyHoveredSkill(null);
+                return;
+            }
+
+            applyHoveredSkill(tree.name);
         };
 
         emblaApi.on('select', onSelect);
@@ -3974,7 +4019,7 @@ function App() {
         return () => {
             emblaApi.off('select', onSelect);
         };
-    }, [emblaApi, filteredTrees, applyHoveredSkill]);
+    }, [emblaApi, filteredTrees, applyHoveredSkill, isEditorMode]);
 
 
 
