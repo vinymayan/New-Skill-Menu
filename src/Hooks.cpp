@@ -260,6 +260,11 @@ static bool HandleKeyboardMouseInput(RE::InputEvent* event, RE::UserEvents* user
     const auto action = button->QUserEvent();
     const std::string actionName = ToLowerAscii(action.c_str());
     const uint32_t idCode = button->GetIDCode();
+    const bool isMouseButton = button->GetDevice() == RE::INPUT_DEVICE::kMouse;
+
+    if (isMouseButton) {
+        return false;
+    }
 
     if (action == userEvents->cancel ||
         action == userEvents->tweenMenu ||
@@ -270,7 +275,7 @@ static bool HandleKeyboardMouseInput(RE::InputEvent* event, RE::UserEvents* user
         StringContains(actionName, "escape") ||
         StringContains(actionName, "tab") ||
         idCode == 1 ||   // Escape
-        idCode == 15) {  // Tab 
+        idCode == 15) {  // Tab
         Prisma::TriggerBack();
         return true;
     }

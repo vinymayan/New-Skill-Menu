@@ -4300,14 +4300,24 @@ function App() {
 
     const wheelTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
     const handleCarouselWheel = useCallback((e: React.WheelEvent) => {
-        if (!emblaApi) return;
+        if (!emblaApi || filteredTrees.length === 0) return;
         if (wheelTimeout.current) return;
 
-        if (e.deltaY > 0) emblaApi.scrollNext();
-        else emblaApi.scrollPrev();
+        e.preventDefault();
+
+        const direction: -1 | 1 = e.deltaY > 0 ? 1 : -1;
+        const currentIndex = emblaApi.selectedScrollSnap();
+        const targetIndex = findNextUnlockedTreeIndex(filteredTrees, currentIndex, direction);
+
+        if (targetIndex !== -1) {
+            emblaApi.scrollTo(targetIndex);
+            playSound('UISkillsFocusSD');
+        } else {
+            playSound('UIMenuCancelSD');
+        }
 
         wheelTimeout.current = setTimeout(() => { wheelTimeout.current = null; }, 100);
-    }, [emblaApi]);
+    }, [emblaApi, filteredTrees]);
 
 
     // Trava para evitar múltiplas chamadas do React Strict Mode
@@ -4440,8 +4450,9 @@ function App() {
     const handleUnlockPerkConfirm = useCallback(() => {
         if (confirmingPerk && typeof (window as any).unlockPerk === 'function') {
             const cost = confirmingPerk.perkCost ?? 0;
+            const customCosts = confirmingPerk.customCosts || [];
             playSound('UISkillsPerkSelect2D');
-            (window as any).unlockPerk(JSON.stringify({ id: confirmingPerk.perk, cost }));
+            (window as any).unlockPerk(JSON.stringify({ id: confirmingPerk.perk, cost, customCosts }));
         }
         setConfirmingPerk(null);
     }, [confirmingPerk]);
