@@ -410,6 +410,65 @@ const DEFAULT_COLOR = '#ffffff';
 const imageValidationCache = new Map<string, string>();
 
 function getNearestNode(nodes: PerkNode[], currentId: string | null, direction: 'up' | 'down' | 'left' | 'right'): string | null {
+    if (nodes.length === 0) return null;
+
+    if (!currentId) {
+        return nodes.reduce((prev, curr) => (prev.y > curr.y ? prev : curr)).id;
+    }
+
+    const current = nodes.find(n => n.id === currentId);
+    if (!current) return nodes[0]?.id ?? null;
+
+    let bestCandidate: string | null = null;
+    let bestScore = Infinity;
+
+    for (const target of nodes) {
+        if (target.id === currentId) continue;
+
+        const dx = target.x - current.x;
+        const dy = target.y - current.y;
+        const absDx = Math.abs(dx);
+        const absDy = Math.abs(dy);
+
+        let primary = 0;
+        let perpendicular = 0;
+
+        switch (direction) {
+            case 'up':
+                if (dy >= -1) continue;
+                primary = -dy;
+                perpendicular = absDx;
+                break;
+            case 'down':
+                if (dy <= 1) continue;
+                primary = dy;
+                perpendicular = absDx;
+                break;
+            case 'left':
+                if (dx >= -1) continue;
+                primary = -dx;
+                perpendicular = absDy;
+                break;
+            case 'right':
+                if (dx <= 1) continue;
+                primary = dx;
+                perpendicular = absDy;
+                break;
+        }
+
+        const score = (perpendicular * 4) + primary;
+
+        if (score < bestScore) {
+            bestScore = score;
+            bestCandidate = target.id;
+        }
+    }
+
+    return bestCandidate;
+}
+
+
+function getNearestNodeByVector(nodes: PerkNode[], currentId: string | null, analogX: number, analogY: number): string | null {
     if (!currentId) {
         if (nodes.length === 0) return null;
         return nodes.reduce((prev, curr) => (prev.y > curr.y ? prev : curr)).id;
@@ -418,39 +477,58 @@ function getNearestNode(nodes: PerkNode[], currentId: string | null, direction: 
     const current = nodes.find(n => n.id === currentId);
     if (!current) return null;
 
-    let candidates = nodes.filter(n => n.id !== currentId);
-    let bestCandidate: string | null = null;
-    let minDistance = Infinity;
+    const vx = analogX;
+    const vy = -analogY;
+    const vLen = Math.hypot(vx, vy);
+    if (vLen < 0.82) return null;
 
-    candidates = candidates.filter(target => {
+    const nx = vx / vLen;
+    const ny = vy / vLen;
+    let bestId: string | null = null;
+    let bestScore = -Infinity;
+
+    for (const target of nodes) {
+        if (target.id === currentId) continue;
+
         const dx = target.x - current.x;
         const dy = target.y - current.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 0.001) continue;
 
-        switch (direction) {
-            case 'up': return dy < -1;
-            case 'down': return dy > 1;
-            case 'left': return dx < -1;
-            case 'right': return dx > 1;
+        const tx = dx / dist;
+        const ty = dy / dist;
+        const dot = tx * nx + ty * ny;
+
+        if (dot < 0.22) continue;
+
+        const score = dot * 1000 - dist * 2;
+        if (score > bestScore) {
+            bestScore = score;
+            bestId = target.id;
         }
-    });
+    }
 
-    candidates.forEach(target => {
-        const dx = target.x - current.x;
-        const dy = target.y - current.y;
-        const dist = (dx * dx) + (dy * dy);
-
-        if (dist < minDistance) {
-            minDistance = dist;
-            bestCandidate = target.id;
-        }
-    });
-
-    return bestCandidate;
+    return bestId;
 }
 
 
 function isSkillTreeLocked(tree?: SkillTreeData | null): boolean {
     return !!tree?.treeRequirements?.some(req => req.isMet === false);
+}
+
+function findNextUnlockedTreeIndex(trees: SkillTreeData[], startIndex: number, direction: -1 | 1): number {
+    if (!trees.length) return -1;
+
+    for (let step = 1; step <= trees.length; step++) {
+        const index = (startIndex + (step * direction) + trees.length) % trees.length;
+        const tree = trees[index];
+
+        if (tree && !isSkillTreeLocked(tree)) {
+            return index;
+        }
+    }
+
+    return -1;
 }
 
 function useVisibility(rootMargin = '0px') {
@@ -485,6 +563,110 @@ const playSound = (soundId: string) => {
         (window as any).playUISound(soundId);
     }
 };
+
+const ensureInputModeStyle = () => {
+    if (document.getElementById('nsm-input-mode-style')) return;
+
+    const style = document.createElement('style');
+    style.id = 'nsm-input-mode-style';
+    style.textContent = `
+        html.nsm-controller-input,
+        html.nsm-controller-input *,
+        body.nsm-controller-input,
+        body.nsm-controller-input *,
+        #root.nsm-controller-input,
+        #root.nsm-controller-input *,
+        canvas {
+            cursor: none !important;
+        }
+    `;
+    document.head.appendChild(style);
+};
+
+const hideCursorForControllerInput = () => {
+    ensureInputModeStyle();
+    document.documentElement.classList.add('nsm-controller-input');
+    document.body.classList.add('nsm-controller-input');
+    document.getElementById('root')?.classList.add('nsm-controller-input');
+};
+
+const showCursorForMouseInput = () => {
+    document.documentElement.classList.remove('nsm-controller-input');
+    document.body.classList.remove('nsm-controller-input');
+    document.getElementById('root')?.classList.remove('nsm-controller-input');
+};
+
+type NSMInputAction = 'input_controller' | 'input_mouse' | 'move_up' | 'move_down' | 'move_left' | 'move_right' | 'page_left' | 'page_right' | 'rank_left' | 'rank_right' | 'confirm' | 'back' | `analog_move:${number}:${number}`;
+
+function keyToNSMAction(key: string): NSMInputAction | null {
+    switch (key.toLowerCase()) {
+        case 'w':
+        case 'arrowup':
+            return 'move_up';
+        case 's':
+        case 'arrowdown':
+            return 'move_down';
+        case 'a':
+        case 'arrowleft':
+            return 'move_left';
+        case 'd':
+        case 'arrowright':
+            return 'move_right';
+        case 'enter':
+        case 'e':
+            return 'confirm';
+        case 'escape':
+        case 'tab':
+            return 'back';
+        default:
+            return null;
+    }
+}
+
+function isNSMModalInputLocked(): boolean {
+    return document.body.classList.contains('nsm-modal-input-active');
+}
+
+function useNSMModalInputLock() {
+    useEffect(() => {
+        document.body.classList.add('nsm-modal-input-active');
+        return () => {
+            document.body.classList.remove('nsm-modal-input-active');
+        };
+    }, []);
+}
+
+function parseAnalogMove(action: NSMInputAction): { x: number; y: number } | null {
+    if (typeof action !== 'string' || !action.startsWith('analog_move:')) return null;
+    const parts = action.split(':');
+    if (parts.length !== 3) return null;
+    const x = Number(parts[1]);
+    const y = Number(parts[2]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { x, y };
+}
+
+function getHorizontalAnalogDirection(action: NSMInputAction): -1 | 1 | null {
+    const analog = parseAnalogMove(action);
+    if (!analog) return null;
+    if (Math.abs(analog.x) < 0.9 || Math.abs(analog.x) < Math.abs(analog.y) * 1.8) return null;
+    return analog.x < 0 ? -1 : 1;
+}
+
+function getVerticalAnalogDirection(action: NSMInputAction): -1 | 1 | null {
+    const analog = parseAnalogMove(action);
+    if (!analog) return null;
+    if (Math.abs(analog.y) < 0.9 || Math.abs(analog.y) < Math.abs(analog.x) * 1.8) return null;
+    return analog.y > 0 ? 1 : -1;
+}
+
+function getModalButtonStyle(isSelected: boolean): React.CSSProperties {
+    return isSelected ? {
+        outline: '2px solid #fff',
+        boxShadow: '0 0 16px rgba(255, 255, 255, 0.85)',
+        transform: 'scale(1.05)'
+    } : {};
+}
 
 // OTIMIZAÇÃO: "listening={false}" equivalente no DOM. Removido pointer-events para
 // que o motor de renderização ignore completamente cálculos de rato (hit-testing) em imagens estáticas/vetoriais.
@@ -1839,6 +2021,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
     const [tooltipRankIdx, setTooltipRankIdx] = useState(0);
     const [isHoveringTooltip, setIsHoveringTooltip] = useState(false);
     const stickyNodeRef = useRef<PerkNode | null>(null);
+    const lastTooltipNodeIdRef = useRef<string | null>(null);
 
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, nodeId: string } | null>(null);
     const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
@@ -1869,27 +2052,84 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
 
     }, [treeData.name]); // Roda apenas quando muda de árvore
 
-    useEffect(() => {
-        if (hoveredPerk) {
-            stickyNodeRef.current = hoveredPerk;
-            let nextIndex = 0;
-            if (hoveredPerk.isUnlocked) {
-                nextIndex = 1;
-                if (hoveredPerk.nextRanks) {
-                    for (const rank of hoveredPerk.nextRanks) {
-                        if (rank.isUnlocked) nextIndex++;
-                        else break;
-                    }
+    const getDefaultTooltipRankIndex = useCallback((node: PerkNode): number => {
+        let nextIndex = 0;
+        if (node.isUnlocked) {
+            nextIndex = 1;
+            if (node.nextRanks) {
+                for (const rank of node.nextRanks) {
+                    if (rank.isUnlocked) nextIndex++;
+                    else break;
                 }
             }
-            const totalRanks = 1 + (hoveredPerk.nextRanks?.length || 0);
-            setTooltipRankIdx(Math.min(nextIndex, totalRanks - 1));
         }
-    }, [hoveredPerk]);
 
-    const activeTooltipNode = hoveredPerk ||
-        (isHoveringTooltip ? stickyNodeRef.current : null) ||
-        (keyboardSelectedNodeId ? treeData.nodes.find(n => n.id === keyboardSelectedNodeId) : null);
+        const totalRanks = 1 + (node.nextRanks?.length || 0);
+        return Math.max(0, Math.min(nextIndex, totalRanks - 1));
+    }, []);
+
+    const keyboardTooltipNode = keyboardSelectedNodeId ? treeData.nodes.find(n => n.id === keyboardSelectedNodeId) : null;
+    const activeTooltipNode = keyboardTooltipNode || hoveredPerk ||
+        (isHoveringTooltip ? stickyNodeRef.current : null);
+
+    useEffect(() => {
+        if (!keyboardSelectedNodeId) return;
+
+        if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+        setHoveredPerk(null);
+        setIsHoveringTooltip(false);
+        stickyNodeRef.current = null;
+    }, [keyboardSelectedNodeId]);
+
+    useEffect(() => {
+        if (!activeTooltipNode) {
+            lastTooltipNodeIdRef.current = null;
+            setTooltipRankIdx(0);
+            return;
+        }
+
+        stickyNodeRef.current = activeTooltipNode;
+        const totalRanks = 1 + (activeTooltipNode.nextRanks?.length || 0);
+
+        if (lastTooltipNodeIdRef.current !== activeTooltipNode.id) {
+            lastTooltipNodeIdRef.current = activeTooltipNode.id;
+            setTooltipRankIdx(getDefaultTooltipRankIndex(activeTooltipNode));
+            return;
+        }
+
+        setTooltipRankIdx(prev => Math.max(0, Math.min(prev, totalRanks - 1)));
+    }, [activeTooltipNode?.id, activeTooltipNode?.nextRanks?.length, getDefaultTooltipRankIndex]);
+
+    useEffect(() => {
+        const handleRankNav = (e: Event) => {
+            const direction = (e as CustomEvent<'left' | 'right'>).detail;
+            const node = activeTooltipNode;
+            if (!node) return;
+
+            const totalRanks = 1 + (node.nextRanks?.length || 0);
+            if (totalRanks <= 1) {
+                playSound('UIMenuCancelSD');
+                return;
+            }
+
+            setTooltipRankIdx(prev => {
+                const next = direction === 'left'
+                    ? Math.max(0, prev - 1)
+                    : Math.min(totalRanks - 1, prev + 1);
+
+                if (next === prev) {
+                    playSound('UIMenuCancelSD');
+                } else {
+                    playSound('UISkillsFocusSD');
+                }
+
+                return next;
+            });
+        };
+
+        window.addEventListener('nsmRankNav', handleRankNav as EventListener);
+        return () => window.removeEventListener('nsmRankNav', handleRankNav as EventListener);
+    }, [activeTooltipNode]);
 
     const handleTooltipWheel = useCallback((e: React.WheelEvent) => {
         if (!activeTooltipNode) return;
@@ -2261,7 +2501,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                 {activeTooltipNode && !isEditorMode && !draggingNodeId && (() => {
                     const nodeToShow = activeTooltipNode;
                     const totalRanks = 1 + (nodeToShow.nextRanks?.length || 0);
-                    const safeIdx = Math.min(tooltipRankIdx, totalRanks - 1);
+                    const safeIdx = Math.max(0, Math.min(Number(tooltipRankIdx) || 0, totalRanks - 1));
                     const isBaseRank = safeIdx === 0;
                     const currentData = isBaseRank ? nodeToShow : nodeToShow.nextRanks![safeIdx - 1];
                     const resolveReqValue = (req: Requirement) => {
@@ -2336,7 +2576,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                                             const hasEnough = currentAmount >= cost.amount;
                                             return (
                                                 <li key={`custom-cost-${i}`} className={hasEnough ? 'req-met' : 'req-unmet'}>
-                                                    {cost.amount}x {resName} (Possui: {currentAmount})
+                                                    {cost.amount}x {resName} ({t('common.owned')}: {currentAmount})
                                                 </li>
                                             );
                                         })}
@@ -2425,7 +2665,11 @@ const SkillTreeDetail = ({
             if (isSkillTreeLocked(tree) && !isEditorMode) {
                 playSound('UIMenuCancelSD');
 
-                const fallbackIndex = trees.findIndex(t => !isSkillTreeLocked(t));
+                const forwardDistance = (newIndex - currentIndex + trees.length) % trees.length;
+                const backwardDistance = (currentIndex - newIndex + trees.length) % trees.length;
+                const direction: -1 | 1 = forwardDistance <= backwardDistance ? 1 : -1;
+                const fallbackIndex = findNextUnlockedTreeIndex(trees, currentIndex, direction);
+
                 if (fallbackIndex !== -1 && fallbackIndex !== newIndex) {
                     emblaApi.scrollTo(fallbackIndex, true);
                     setCurrentIndex(fallbackIndex);
@@ -2442,62 +2686,168 @@ const SkillTreeDetail = ({
         };
         emblaApi.on('select', onSelect);
         return () => { emblaApi.off('select', onSelect); };
-    }, [emblaApi, trees, onSlideChange, isEditorMode]);
+    }, [emblaApi, trees, onSlideChange, isEditorMode, currentIndex]);
 
     useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
+        const handleInputAction = (action: NSMInputAction) => {
             if (isEditorMode) return;
 
-            const key = e.key.toLowerCase();
-            if (!['w', 'a', 's', 'd', 'enter', 'e'].includes(key)) return;
+            if (action === 'input_controller') {
+                hideCursorForControllerInput();
+                return;
+            }
+
+            if (action === 'input_mouse') {
+                showCursorForMouseInput();
+                setKeyboardNodeId(null);
+                return;
+            }
 
             const currentTree = trees[currentIndex];
+
             if (!currentTree || currentTree.nodes.length === 0) {
-                if (key === 's') onClose();
-                if (key === 'a' && emblaApi) emblaApi.scrollPrev();
-                if (key === 'd' && emblaApi) emblaApi.scrollNext();
+                if (action === 'back') onClose();
+                if (action === 'confirm') playSound('UIMenuCancelSD');
                 return;
             }
 
-            if (!keyboardNodeId) {
-                if (['w', 'a', 's', 'd'].includes(key)) {
+            if (action === 'back') {
+                playSound('UISkillsBackwardSD');
+                onClose(trees[currentIndex].name);
+                return;
+            }
+
+            if (action === 'confirm') {
+                if (!keyboardNodeId) {
                     const startNode = currentTree.nodes.reduce((prev, curr) => (prev.y > curr.y ? prev : curr));
                     setKeyboardNodeId(startNode.id);
+                    return;
                 }
-                return;
-            }
 
-            if (key === 'enter' || key === 'e') {
                 const node = currentTree.nodes.find(n => n.id === keyboardNodeId);
-                if (node && onNodeClick) onNodeClick(node);
+                if (node && onNodeClick) onNodeClick(node, currentTree);
                 return;
             }
 
-            let direction: 'up' | 'down' | 'left' | 'right' | null = null;
-            if (key === 'w') direction = 'up';
-            if (key === 's') direction = 'down';
-            if (key === 'a') direction = 'left';
-            if (key === 'd') direction = 'right';
-
-            if (direction) {
-                const nextId = getNearestNode(currentTree.nodes, keyboardNodeId, direction);
-
-                if (nextId) {
-                    setKeyboardNodeId(nextId);
-                } else {
-                    if (direction === 'down') {
-                        onClose(trees[currentIndex].name);
-                    } else if (direction === 'left') {
-                        if (emblaApi) emblaApi.scrollPrev();
-                    } else if (direction === 'right') {
-                        if (emblaApi) emblaApi.scrollNext();
-                    }
+            if (action === 'page_left' || action === 'page_right') {
+                if (!emblaApi) {
+                    playSound('UIMenuCancelSD');
+                    return;
                 }
+
+                const direction: -1 | 1 = action === 'page_left' ? -1 : 1;
+                const targetIndex = findNextUnlockedTreeIndex(trees, currentIndex, direction);
+                if (targetIndex !== -1 && targetIndex !== currentIndex) {
+                    emblaApi.scrollTo(targetIndex);
+                    return;
+                }
+
+                playSound('UIMenuCancelSD');
+                return;
             }
+
+            if (action === 'rank_left' || action === 'rank_right') {
+                if (!keyboardNodeId) {
+                    playSound('UIMenuCancelSD');
+                    return;
+                }
+
+                window.dispatchEvent(new CustomEvent('nsmRankNav', {
+                    detail: action === 'rank_left' ? 'left' : 'right'
+                }));
+                return;
+            }
+
+            const analog = parseAnalogMove(action);
+            let nextId: string | null = null;
+
+            if (analog) {
+                if (!keyboardNodeId) {
+                    const startNode = currentTree.nodes.reduce((prev, curr) => (prev.y > curr.y ? prev : curr));
+                    setKeyboardNodeId(startNode.id);
+                    playSound('UISkillsFocusSD');
+                    return;
+                }
+                nextId = getNearestNodeByVector(currentTree.nodes, keyboardNodeId, analog.x, analog.y);
+            } else {
+                let direction: 'up' | 'down' | 'left' | 'right' | null = null;
+                if (action === 'move_up') direction = 'up';
+                if (action === 'move_down') direction = 'down';
+                if (action === 'move_left') direction = 'left';
+                if (action === 'move_right') direction = 'right';
+
+                if (!direction) return;
+
+                if (!keyboardNodeId) {
+                    const startNode = currentTree.nodes.reduce((prev, curr) => (prev.y > curr.y ? prev : curr));
+                    setKeyboardNodeId(startNode.id);
+                    playSound('UISkillsFocusSD');
+                    return;
+                }
+
+                nextId = getNearestNode(currentTree.nodes, keyboardNodeId, direction);
+            }
+
+            if (nextId) {
+                setKeyboardNodeId(nextId);
+                playSound('UISkillsFocusSD');
+                return;
+            }
+
+            if (action === 'move_down' && keyboardNodeId) {
+                playSound('UISkillsBackwardSD');
+                onClose(trees[currentIndex].name);
+                return;
+            }
+
+            const analogExit = parseAnalogMove(action);
+            if (analogExit && analogExit.y < -0.9 && keyboardNodeId) {
+                playSound('UISkillsBackwardSD');
+                onClose(trees[currentIndex].name);
+                return;
+            }
+
+            playSound('UIMenuCancelSD');
+        };
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (isNSMModalInputLocked()) return;
+            const activeElement = document.activeElement as HTMLElement;
+            if (activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeElement.tagName)) return;
+
+            const action = keyToNSMAction(e.key);
+            if (!action) return;
+
+            showCursorForMouseInput();
+            setKeyboardNodeId(null);
+            e.preventDefault();
+            handleInputAction(action);
+        };
+
+        const handlePrismaInput = (e: Event) => {
+            const action = (e as CustomEvent<NSMInputAction>).detail;
+            if (!action) return;
+            if (isNSMModalInputLocked()) return;
+            handleInputAction(action);
+        };
+
+        const handleMouseModeInput = () => {
+            showCursorForMouseInput();
+            setKeyboardNodeId(null);
         };
 
         window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
+        window.addEventListener('nsmInput', handlePrismaInput as EventListener);
+        window.addEventListener('mousemove', handleMouseModeInput);
+        window.addEventListener('mousedown', handleMouseModeInput);
+        window.addEventListener('wheel', handleMouseModeInput);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('nsmInput', handlePrismaInput as EventListener);
+            window.removeEventListener('mousemove', handleMouseModeInput);
+            window.removeEventListener('mousedown', handleMouseModeInput);
+            window.removeEventListener('wheel', handleMouseModeInput);
+        };
     }, [currentIndex, keyboardNodeId, trees, emblaApi, onClose, isEditorMode, onNodeClick]);
 
     return (
@@ -2667,8 +3017,13 @@ const SkillColumn = memo(({ treeData, uiSettings, globalSettings, formLists, onS
         playSound('UIMenuFocus');
     };
 
+    const columnStyle = {
+        '--glow-color': treeColor
+    } as React.CSSProperties;
+
     return (
-        <div className={`skill-column ${isForcedHover ? 'forced-hover' : ''} ${isLocked ? 'column-locked' : ''}`} ref={ref} onClick={handleClick} onContextMenu={e => e.preventDefault()} onMouseUp={handleMouseUp} onMouseEnter={handleMouseEnter} style={{ '--glow-color': treeColor } as React.CSSProperties}>
+        <div className={`skill-column ${isForcedHover ? 'forced-hover selected-tree-focus' : ''} ${isLocked ? 'column-locked' : ''}`} ref={ref} onClick={handleClick} onContextMenu={e => e.preventDefault()} onMouseUp={handleMouseUp} onMouseEnter={handleMouseEnter} style={columnStyle}>
+
 
             <div className="column-tree-preview">
                 {showTree && isVisible && !isLocked && (
@@ -2717,7 +3072,16 @@ const SkillColumn = memo(({ treeData, uiSettings, globalSettings, formLists, onS
                 </div>
                 <div className="skill-info-container">
                     <div className="skill-info">
-                        <span className="skill-name">{displayTreeName}</span>
+                        <span
+                            className="skill-name"
+                            style={isForcedHover ? {
+                                borderBottom: `2px solid ${treeColor}`,
+                                paddingBottom: '4px',
+                                textShadow: `0 0 10px ${treeColor}`
+                            } : undefined}
+                        >
+                            {displayTreeName}
+                        </span>
                         {!isLocked && <span className="skill-level">{treeData.currentLevel}</span>}
                     </div>
                     {!isLocked && (
@@ -3022,6 +3386,75 @@ const LevelUpModal = ({ trees, settings, rules, currentLevel, pendingLevelUps, o
 
 const ConfirmPerkModal = ({ perkName, cost, customCosts, customResources, onConfirm, onCancel }: { perkName: string, cost: number, customCosts?: CustomCost[], customResources: CustomResource[], onConfirm: () => void, onCancel: () => void }) => {
     const plural = cost > 1 ? 's' : '';
+    const [selectedOption, setSelectedOption] = useState<0 | 1>(0);
+
+    useNSMModalInputLock();
+
+    const runSelectedOption = useCallback(() => {
+        if (selectedOption === 0) onConfirm();
+        else onCancel();
+    }, [selectedOption, onConfirm, onCancel]);
+
+    useEffect(() => {
+        const moveSelection = (direction: -1 | 1) => {
+            setSelectedOption(prev => {
+                const next = prev === 0 ? 1 : 0;
+                playSound('UISkillsFocusSD');
+                return next as 0 | 1;
+            });
+        };
+
+        const handleAction = (action: NSMInputAction) => {
+            hideCursorForControllerInput();
+
+            if (action === 'move_left') {
+                setSelectedOption(0);
+                playSound('UISkillsFocusSD');
+                return;
+            }
+
+            if (action === 'move_right') {
+                setSelectedOption(1);
+                playSound('UISkillsFocusSD');
+                return;
+            }
+
+            if (action === 'move_up' || action === 'move_down') {
+                return;
+            }
+
+            if (action === 'confirm') {
+                runSelectedOption();
+                return;
+            }
+
+            if (action === 'back') {
+                onCancel();
+            }
+        };
+
+        const handlePrismaInput = (e: Event) => {
+            e.stopImmediatePropagation();
+            const action = (e as CustomEvent<NSMInputAction>).detail;
+            if (action) handleAction(action);
+        };
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const action = keyToNSMAction(e.key);
+            if (!action) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            handleAction(action);
+        };
+
+        window.addEventListener('nsmInput', handlePrismaInput as EventListener, true);
+        window.addEventListener('keydown', handleKeyDown, true);
+        return () => {
+            window.removeEventListener('nsmInput', handlePrismaInput as EventListener, true);
+            window.removeEventListener('keydown', handleKeyDown, true);
+        };
+    }, [runSelectedOption, onCancel]);
+
     return (
         <div className="skyrim-modal-overlay">
             <div className="skyrim-modal-content">
@@ -3037,8 +3470,8 @@ const ConfirmPerkModal = ({ perkName, cost, customCosts, customResources, onConf
                     </div>
                 )}
                 <div className="modal-actions">
-                    <button className="modal-btn yes-btn" onClick={onConfirm}>{t('common.yes')}</button>
-                    <button className="modal-btn no-btn" onClick={onCancel}>{t('common.no')}</button>
+                    <button className={`modal-btn yes-btn ${selectedOption === 0 ? 'forced-hover' : ''}`} style={getModalButtonStyle(selectedOption === 0)} onMouseEnter={() => setSelectedOption(0)} onClick={onConfirm}>{t('common.yes')}</button>
+                    <button className={`modal-btn no-btn ${selectedOption === 1 ? 'forced-hover' : ''}`} style={getModalButtonStyle(selectedOption === 1)} onMouseEnter={() => setSelectedOption(1)} onClick={onCancel}>{t('common.no')}</button>
                 </div>
             </div>
         </div>
@@ -3390,6 +3823,67 @@ const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, custo
 };
 
 const ConfirmationModal = ({ title, message, onConfirm, onCancel }: { title: string, message: string, onConfirm: () => void, onCancel: () => void }) => {
+    const [selectedOption, setSelectedOption] = useState<0 | 1>(0);
+
+    useNSMModalInputLock();
+
+    const runSelectedOption = useCallback(() => {
+        if (selectedOption === 0) onConfirm();
+        else onCancel();
+    }, [selectedOption, onConfirm, onCancel]);
+
+    useEffect(() => {
+        const handleAction = (action: NSMInputAction) => {
+            hideCursorForControllerInput();
+
+            if (action === 'move_left') {
+                setSelectedOption(0);
+                playSound('UISkillsFocusSD');
+                return;
+            }
+
+            if (action === 'move_right') {
+                setSelectedOption(1);
+                playSound('UISkillsFocusSD');
+                return;
+            }
+
+            if (action === 'move_up' || action === 'move_down') {
+                return;
+            }
+
+            if (action === 'confirm') {
+                runSelectedOption();
+                return;
+            }
+
+            if (action === 'back') {
+                onCancel();
+            }
+        };
+
+        const handlePrismaInput = (e: Event) => {
+            e.stopImmediatePropagation();
+            const action = (e as CustomEvent<NSMInputAction>).detail;
+            if (action) handleAction(action);
+        };
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const action = keyToNSMAction(e.key);
+            if (!action) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            handleAction(action);
+        };
+
+        window.addEventListener('nsmInput', handlePrismaInput as EventListener, true);
+        window.addEventListener('keydown', handleKeyDown, true);
+        return () => {
+            window.removeEventListener('nsmInput', handlePrismaInput as EventListener, true);
+            window.removeEventListener('keydown', handleKeyDown, true);
+        };
+    }, [runSelectedOption, onCancel]);
+
     return (
         <div className="skyrim-modal-overlay" style={{ zIndex: 9000 }}>
             <div className="skyrim-modal-content">
@@ -3397,8 +3891,8 @@ const ConfirmationModal = ({ title, message, onConfirm, onCancel }: { title: str
                 <div className="tooltip-divider" style={{ width: '100%', marginBottom: '20px' }}></div>
                 <p style={{ fontSize: '1.2rem', lineHeight: '1.6' }}>{message}</p>
                 <div className="modal-actions">
-                    <button className="modal-btn yes-btn" onClick={onConfirm}>{t('common.confirm')}</button>
-                    <button className="modal-btn no-btn" onClick={onCancel}>{t('common.cancel')}</button>
+                    <button className={`modal-btn yes-btn ${selectedOption === 0 ? 'forced-hover' : ''}`} style={getModalButtonStyle(selectedOption === 0)} onMouseEnter={() => setSelectedOption(0)} onClick={onConfirm}>{t('common.confirm')}</button>
+                    <button className={`modal-btn no-btn ${selectedOption === 1 ? 'forced-hover' : ''}`} style={getModalButtonStyle(selectedOption === 1)} onMouseEnter={() => setSelectedOption(1)} onClick={onCancel}>{t('common.cancel')}</button>
                 </div>
             </div>
         </div>
@@ -3406,6 +3900,42 @@ const ConfirmationModal = ({ title, message, onConfirm, onCancel }: { title: str
 };
 
 const AlertModal = ({ title, message, onClose }: { title: string, message: string, onClose: () => void }) => {
+    useNSMModalInputLock();
+
+    useEffect(() => {
+        const handleAction = (action: NSMInputAction) => {
+            if (action === 'confirm' || action === 'back') {
+                hideCursorForControllerInput();
+                onClose();
+            }
+
+            if (action === 'move_up' || action === 'move_down' || action === 'move_left' || action === 'move_right') {
+                return;
+            }
+        };
+
+        const handlePrismaInput = (e: Event) => {
+            e.stopImmediatePropagation();
+            const action = (e as CustomEvent<NSMInputAction>).detail;
+            if (action) handleAction(action);
+        };
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const action = keyToNSMAction(e.key);
+            if (!action) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            handleAction(action);
+        };
+
+        window.addEventListener('nsmInput', handlePrismaInput as EventListener, true);
+        window.addEventListener('keydown', handleKeyDown, true);
+        return () => {
+            window.removeEventListener('nsmInput', handlePrismaInput as EventListener, true);
+            window.removeEventListener('keydown', handleKeyDown, true);
+        };
+    }, [onClose]);
+
     return (
         <div className="skyrim-modal-overlay" style={{ zIndex: 9500 }}>
             <div className="skyrim-modal-content">
@@ -3413,7 +3943,7 @@ const AlertModal = ({ title, message, onClose }: { title: string, message: strin
                 <div className="tooltip-divider" style={{ width: '100%', marginBottom: '20px' }}></div>
                 <p style={{ fontSize: '1.2rem', lineHeight: '1.6' }}>{message}</p>
                 <div className="modal-actions" style={{ justifyContent: 'center' }}>
-                    <button className="modal-btn no-btn" onClick={onClose}>
+                    <button className="modal-btn no-btn forced-hover" style={getModalButtonStyle(true)} onClick={onClose}>
                         {t('common.ok', { defaultValue: 'OK' })}
                     </button>
                 </div>
@@ -3424,6 +3954,9 @@ const AlertModal = ({ title, message, onClose }: { title: string, message: strin
 
 // --- Main App ---
 function App() {
+    useEffect(() => {
+        hideCursorForControllerInput();
+    }, []);
     const [playerData, setPlayerData] = useState<PlayerData | null>(null);
     const [skillTrees, setSkillTrees] = useState<SkillTreeData[]>([]);
     const [availableReqs, setAvailableReqs] = useState<RequirementDef[]>([]);
@@ -3476,6 +4009,20 @@ function App() {
         dragFree: !uiSettings?.performanceMode,
         containScroll: 'trimSnaps'
     });
+
+    const focusedSkillName = useMemo(() => {
+        if (hoveredSkillName && filteredTrees.some(t => t.name === hoveredSkillName)) {
+            return hoveredSkillName;
+        }
+
+        const selectedIndex = emblaApi?.selectedScrollSnap?.() ?? 0;
+        const selectedTree = filteredTrees[selectedIndex];
+        if (selectedTree && !isSkillTreeLocked(selectedTree)) {
+            return selectedTree.name;
+        }
+
+        return filteredTrees.find(t => !isSkillTreeLocked(t))?.name ?? filteredTrees[0]?.name ?? null;
+    }, [hoveredSkillName, filteredTrees, emblaApi]);
 
 
     const shouldShowLevelUp = useMemo(() => {
@@ -3630,6 +4177,25 @@ function App() {
             setIsExiting(false);
             setIsLoaded(false);
         }, 500);
+    }, []);
+
+
+    useEffect(() => {
+        const handleMouseKeyboardMode = () => {
+            showCursorForMouseInput();
+        };
+
+        window.addEventListener('mousemove', handleMouseKeyboardMode);
+        window.addEventListener('mousedown', handleMouseKeyboardMode);
+        window.addEventListener('wheel', handleMouseKeyboardMode);
+        window.addEventListener('keydown', handleMouseKeyboardMode);
+
+        return () => {
+            window.removeEventListener('mousemove', handleMouseKeyboardMode);
+            window.removeEventListener('mousedown', handleMouseKeyboardMode);
+            window.removeEventListener('wheel', handleMouseKeyboardMode);
+            window.removeEventListener('keydown', handleMouseKeyboardMode);
+        };
     }, []);
 
     useEffect(() => {
@@ -3939,10 +4505,39 @@ function App() {
         }
     }, []);
 
+    const scrollMainCarouselToUnlocked = useCallback((direction: -1 | 1) => {
+        if (!emblaApi || filteredTrees.length === 0) return;
+
+        const currentIndex = emblaApi.selectedScrollSnap();
+        const targetIndex = findNextUnlockedTreeIndex(filteredTrees, currentIndex, direction);
+
+        if (targetIndex !== -1) {
+            emblaApi.scrollTo(targetIndex);
+        }
+    }, [emblaApi, filteredTrees]);
+
+
+    const cycleCategory = useCallback((direction: -1 | 1) => {
+        if (!categories || categories.length === 0) return;
+
+        const currentIndex = Math.max(0, categories.findIndex(cat => cat === activeCategory));
+        const nextIndex = (currentIndex + direction + categories.length) % categories.length;
+        const nextCategory = categories[nextIndex];
+
+        setActiveCategory(nextCategory);
+        setHoveredSkillName(null);
+        playSound('UISkillsFocusSD');
+    }, [categories, activeCategory]);
+
     useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            const activeElement = document.activeElement as HTMLElement;
-            if (activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeElement.tagName)) {
+        const handleInputAction = (action: NSMInputAction) => {
+            if (action === 'input_controller') {
+                hideCursorForControllerInput();
+                return;
+            }
+
+            if (action === 'input_mouse') {
+                showCursorForMouseInput();
                 return;
             }
 
@@ -3957,27 +4552,65 @@ function App() {
 
             if (isAnyModalOpen || !emblaApi) return;
 
-            const key = e.key.toLowerCase();
+            const analogDirection = getHorizontalAnalogDirection(action);
+            const analogVerticalDirection = getVerticalAnalogDirection(action);
 
-            if (key === 'a') {
-                emblaApi.scrollPrev();
-            } else if (key === 'd') {
-                emblaApi.scrollNext();
-            }
-            else if (key === 'w' || key === 'enter') {
-                if (hoveredSkillName) {
-                    const hoveredTree = skillTrees.find(t => t.name === hoveredSkillName);
-                    if (!isSkillTreeLocked(hoveredTree)) {
-                        setSelectedSkill(hoveredSkillName);
-                    } else {
-                        playSound('UIMenuCancelSD');
-                    }
+            const openHoveredTree = () => {
+                const targetSkillName = focusedSkillName;
+                if (!targetSkillName) {
+                    playSound('UIMenuCancelSD');
+                    return;
                 }
+
+                const hoveredTree = skillTrees.find(t => t.name === targetSkillName);
+                if (!isSkillTreeLocked(hoveredTree)) {
+                    setHoveredSkillName(targetSkillName);
+                    setSelectedSkill(targetSkillName);
+                } else {
+                    playSound('UIMenuCancelSD');
+                }
+            };
+
+            if (action === 'rank_left') {
+                cycleCategory(-1);
+            } else if (action === 'rank_right') {
+                cycleCategory(1);
+            } else if (action === 'move_left' || action === 'page_left' || analogDirection === -1) {
+                scrollMainCarouselToUnlocked(-1);
+            } else if (action === 'move_right' || action === 'page_right' || analogDirection === 1) {
+                scrollMainCarouselToUnlocked(1);
+            } else if (action === 'move_up' || action === 'confirm' || analogVerticalDirection === 1) {
+                openHoveredTree();
+            } else if (action === 'move_down' || analogVerticalDirection === -1) {
+                playSound('UIMenuCancelSD');
             }
         };
 
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const activeElement = document.activeElement as HTMLElement;
+            if (activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeElement.tagName)) return;
+
+            const action = keyToNSMAction(e.key);
+            if (!action) return;
+
+            showCursorForMouseInput();
+            e.preventDefault();
+            handleInputAction(action);
+        };
+
+        const handlePrismaInput = (e: Event) => {
+            const action = (e as CustomEvent<NSMInputAction>).detail;
+            if (!action) return;
+            if (isNSMModalInputLocked()) return;
+            handleInputAction(action);
+        };
+
         window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
+        window.addEventListener('nsmInput', handlePrismaInput as EventListener);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('nsmInput', handlePrismaInput as EventListener);
+        };
     }, [
         emblaApi,
         selectedSkill,
@@ -3989,7 +4622,10 @@ function App() {
         playerData?.isLevelUpMenuOpen,
         isEditorMode,
         hoveredSkillName,
-        skillTrees
+        focusedSkillName,
+        skillTrees,
+        scrollMainCarouselToUnlocked,
+        cycleCategory
     ]);
 
     useEffect(() => {
@@ -4123,7 +4759,7 @@ function App() {
             >
                 <div className={`skills-columns-track embla__container ${hoveredSkillName ? 'has-forced-hover' : ''}`}>
                     {filteredTrees.map((tree) => {
-                        const isHovered = tree.name === hoveredSkillName;
+                        const isHovered = tree.name === focusedSkillName;
                         return (
                             <div className={`embla__slide ${isHovered ? 'is-forced-hover' : ''}`} key={`col-${tree.name}`}>
                                 <SkillColumn

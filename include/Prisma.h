@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "PrismaUI_API.h"
 #include <miniz.h>
 
@@ -19,6 +19,7 @@ public:
     static void SetLevelUpMenuOpen(bool isOpen);
     static bool IsLevelUpMenuOpen();
     static void TriggerBack();
+    static void SetInputCaptureForPointerMode(bool enablePointerInput);
 };
 
 

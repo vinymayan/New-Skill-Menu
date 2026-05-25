@@ -1,4 +1,4 @@
-﻿#include "Prisma.h"
+#include "Prisma.h"
 #include "Manager.h"
 
 using json = nlohmann::json;
@@ -6,6 +6,7 @@ using json = nlohmann::json;
 PRISMA_UI_API::IVPrismaUI1* PrismaUI = nullptr;
 static PrismaView view;
 static bool isVisible = false;
+static bool g_prismaInputCaptureEnabled = true;
 
 static json g_mergedLocCache;
 static bool g_locLoaded = false;
@@ -31,28 +32,22 @@ static json g_resourcesCache = json::array();
 static bool g_resourcesLoaded = false;
 
 static void TriggerMouseModeEvent(bool close = false) {
-    auto dispatcher = SKSE::GetModCallbackEventSource();
-    if (dispatcher) {
-        float actionValue = close ? 0.0f : 1.0f;
-        SKSE::ModCallbackEvent modEvent{
-            RE::BSFixedString("MouseMode_Trigger"),
-            RE::BSFixedString(""), 
-            actionValue,
-            nullptr
-        };
-        dispatcher->SendEvent(&modEvent);
-        logger::info("Evento MouseMode_Trigger disparado para alternar o MouseMode.");
-    }
+    (void)close;
 }
-static bool ShouldTriggerMouseMode() {
-    auto inputMgr = RE::BSInputDeviceManager::GetSingleton();
-    bool isGamepad = inputMgr && inputMgr->IsGamepadEnabled();
 
-    return isGamepad && Prisma::MouseMode;
+static bool ShouldTriggerMouseMode() {
+    return false;
 }
 
 void Prisma::SendKeyPress(const std::string& key) {
     if (PrismaUI && createdView && isVisible) {
+        if (key.rfind("nsm:", 0) == 0) {
+            const std::string action = key.substr(4);
+            std::string script = fmt::format("window.dispatchEvent(new CustomEvent(\'nsmInput\', {{ detail: \'{}\' }}));", action);
+            PrismaUI->Invoke(view, script.c_str());
+            return;
+        }
+
         std::string script = fmt::format("window.dispatchEvent(new KeyboardEvent('keydown', {{ key: '{}' }}));", key);
         PrismaUI->Invoke(view, script.c_str());
     }
@@ -3164,6 +3159,7 @@ void Prisma::Show() {
             PrismaUI->RegisterJSListener(currentView, "saveUISettings", [](const char* args) { SaveUISettingsFromUI(args); });
             SendUpdateToUI();
             PrismaUI->Focus(currentView, true);
+            g_prismaInputCaptureEnabled = true;
             });
     }
     else {
@@ -3171,14 +3167,10 @@ void Prisma::Show() {
         PrismaUI->Show(view);
         SendUpdateToUI();
         PrismaUI->Focus(view, true);
+        g_prismaInputCaptureEnabled = true;
     }
 
-    //RE::UIBlurManager::GetSingleton()->IncrementBlurCount();
     isVisible = true;
-    if (ShouldTriggerMouseMode()) {
-        TriggerMouseModeEvent();
-    }
-   
 }
 
 void Prisma::TriggerExitAnimation() {
@@ -3195,6 +3187,16 @@ void Prisma::TriggerBack() {
     }
 }
 
+void Prisma::SetInputCaptureForPointerMode(bool enablePointerInput) {
+    g_prismaInputCaptureEnabled = enablePointerInput;
+
+    if (!PrismaUI || !createdView || !isVisible) {
+        return;
+    }
+
+    PrismaUI->Focus(view, true);
+}
+
 void Prisma::Hide() {
     if (!PrismaUI) return;
 
@@ -3202,7 +3204,6 @@ void Prisma::Hide() {
         logger::debug("Escondendo menu Prisma...");
         PrismaUI->Unfocus(view);
         PrismaUI->Hide(view);
-       //RE::UIBlurManager::GetSingleton()->DecrementBlurCount();
         isVisible = false;
         auto ui = RE::UI::GetSingleton();
         if (ui) {
@@ -3210,9 +3211,6 @@ void Prisma::Hide() {
             if (focusMenu) {
                 focusMenu->menuFlags.reset(RE::UI_MENU_FLAGS::kFreezeFrameBackground);
             }
-        }
-        if (ShouldTriggerMouseMode()) {
-            TriggerMouseModeEvent(true);
         }
         auto msgQueue = RE::UIMessageQueue::GetSingleton();
         if (msgQueue) {

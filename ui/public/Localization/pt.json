@@ -1,4 +1,4 @@
-﻿{
+{
   "common": {
     "all": "Todos",
     "lvl": "Nvl",
@@ -34,7 +34,8 @@
     "not": "NÃO",
     "warning": "Aviso",
     "cw": "Carga",
-    "ok": "OK"
+    "ok": "OK",
+    "owned": "Possui"
   },
   "header": {
     "name": "NOME",

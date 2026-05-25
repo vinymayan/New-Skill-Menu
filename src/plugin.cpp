@@ -175,14 +175,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         Prisma::PreloadLocalization();
         PlayerLevel::Register();
         Prisma::Install();
-        if (GetModuleHandleA("MouseMode.dll")) {
-            Prisma::MouseMode = true;
-            logger::info("MouseMode.dll founded");
-        }
-        else {
-            Prisma::MouseMode = false;
-            logger::info("MouseMode.dll not found.");
-        }
+        Prisma::MouseMode = false;
         //TriggerEventHandler::Register();
 	}
     if (message->type == SKSE::MessagingInterface::kNewGame) {

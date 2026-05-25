@@ -1,6 +1,11 @@
-﻿#include "Hooks.h"
+#include "Hooks.h"
 #include "InputEventHandler.h"
 #include "Manager.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <Windows.h>
 
 extern nlohmann::json GetSettings();
 
@@ -96,38 +101,254 @@ struct ProcessInputQueueHook {
     }
 };
 
-bool OnInput(RE::InputEvent* event) { 
-    if (!event) return false;
-    auto button = event->AsButtonEvent();
-    if (!button) return false;
-    if (!button->IsDown()) return false;
-    /*if (button->GetIDCode() == RE::BSWin32KeyboardDevice::Keys::kF3) {
-        auto player = RE::PlayerCharacter::GetSingleton();
-        player->AddSkillExperience(RE::ActorValue::kHeavyArmor, 1000.0f);
-        return true;
-    }*/
-    if (!Prisma::IsHidden()) {
-        auto userEvents = RE::UserEvents::GetSingleton();
-        auto action = button->QUserEvent();
+static std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
 
-        // Se a ação for ESC (cancel) ou TAB (tweenMenu)...
-        if (action == userEvents->cancel || action == userEvents->tweenMenu) {
-            if (Prisma::IsLevelUpMenuOpen()) {
-                logger::debug("OnInput: Voltar ignorado pois o menu de Level Up esta ativo.");
-                return true; // Bloqueia e consome o input
-            }
-            logger::debug("OnInput: Botao Voltar pressionado. Chamando Prisma::TriggerBack()...");
-            Prisma::TriggerBack(); // Avisa o JavaScript
-        }
-        if (action == userEvents->up) { Prisma::SendKeyPress("w"); return true; }
-        if (action == userEvents->down) { Prisma::SendKeyPress("s"); return true; }
-        if (action == userEvents->left) { Prisma::SendKeyPress("a"); return true; }
-        if (action == userEvents->right) { Prisma::SendKeyPress("d"); return true; }
-        if (action == userEvents->accept) { Prisma::SendKeyPress("enter"); return true; }
+static void SendInputMode(const char* mode);
+
+static bool SendControllerActionThrottled(const char* action, uint64_t delayMs = 160) {
+    static uint64_t lastSentMs = 0;
+    static std::string lastAction;
+
+    const uint64_t now = GetTickCount64();
+    SendInputMode("controller");
+    if (lastAction == action && now - lastSentMs < delayMs) {
+        return true;
     }
 
-    
+    lastAction = action;
+    lastSentMs = now;
+
+    Prisma::SendKeyPress(std::string("nsm:") + action);
+    return true;
+}
+
+static bool SendControllerAnalogActionThrottled(const char* action, uint64_t delayMs = 180) {
+    static uint64_t lastAnalogSentMs = 0;
+
+    const uint64_t now = GetTickCount64();
+    SendInputMode("controller");
+
+    if (now - lastAnalogSentMs < delayMs) {
+        return true;
+    }
+
+    lastAnalogSentMs = now;
+    Prisma::SendKeyPress(std::string("nsm:") + action);
+    return true;
+}
+
+static bool StringContains(const std::string& haystack, const std::string& needle) {
+    return haystack.find(needle) != std::string::npos;
+}
+
+static bool g_nsmControllerPointerMode = false;
+static float g_savedCursorX = 0.0f;
+static float g_savedCursorY = 0.0f;
+static bool g_hasSavedCursorPosition = false;
+
+static void SetPrismaCursorHiddenByInputMode(bool hide) {
+    auto cursor = RE::MenuCursor::GetSingleton();
+    if (!cursor) {
+        g_nsmControllerPointerMode = hide;
+        return;
+    }
+
+    if (hide) {
+        if (!g_nsmControllerPointerMode) {
+            g_savedCursorX = cursor->cursorPosX;
+            g_savedCursorY = cursor->cursorPosY;
+            g_hasSavedCursorPosition = true;
+        }
+
+        g_nsmControllerPointerMode = true;
+
+        cursor->cursorPosX = -10000.0f;
+        cursor->cursorPosY = -10000.0f;
+        return;
+    }
+
+    if (g_nsmControllerPointerMode && g_hasSavedCursorPosition) {
+        cursor->cursorPosX = g_savedCursorX;
+        cursor->cursorPosY = g_savedCursorY;
+    }
+
+    g_nsmControllerPointerMode = false;
+}
+
+static void MaintainControllerCursorHidden() {
+    if (!g_nsmControllerPointerMode) {
+        return;
+    }
+
+    auto cursor = RE::MenuCursor::GetSingleton();
+    if (!cursor) {
+        return;
+    }
+
+    cursor->cursorPosX = -10000.0f;
+    cursor->cursorPosY = -10000.0f;
+}
+
+static void SendInputMode(const char* mode) {
+    static std::string lastMode;
+    static uint64_t lastSentMs = 0;
+
+    const uint64_t now = GetTickCount64();
+    if (lastMode == mode && now - lastSentMs < 250) {
+        return;
+    }
+
+    lastMode = mode;
+    lastSentMs = now;
+
+    const bool mouseMode = std::string_view(mode) == "mouse";
+
+    Prisma::SetInputCaptureForPointerMode(mouseMode);
+    SetPrismaCursorHiddenByInputMode(!mouseMode);
+
+    Prisma::SendKeyPress(std::string("nsm:input_") + mode);
+}
+
+static bool HandleKeyboardMouseInput(RE::InputEvent* event, RE::UserEvents* userEvents) {
+    if (!event || !userEvents) return false;
+
+    SendInputMode("mouse");
+
+    auto button = event->AsButtonEvent();
+    if (!button || !button->IsDown()) {
+        return false;
+    }
+
+    const auto action = button->QUserEvent();
+    const std::string actionName = ToLowerAscii(action.c_str());
+    const uint32_t idCode = button->GetIDCode();
+
+    if (action == userEvents->cancel ||
+        action == userEvents->tweenMenu ||
+        StringContains(actionName, "cancel") ||
+        StringContains(actionName, "tweenmenu") ||
+        StringContains(actionName, "tween menu") ||
+        StringContains(actionName, "journal") ||
+        StringContains(actionName, "escape") ||
+        StringContains(actionName, "tab") ||
+        idCode == 1 ||   // Escape
+        idCode == 15) {  // Tab
+        Prisma::TriggerBack();
+        return true;
+    }
+
     return false;
+}
+
+static bool HandleControllerButtonInput(RE::ButtonEvent* button, RE::UserEvents* userEvents) {
+    if (!button || !userEvents || !button->IsDown()) return false;
+
+    const auto action = button->QUserEvent();
+    const std::string actionName = ToLowerAscii(action.c_str());
+    const uint32_t idCode = button->GetIDCode();
+
+    logger::debug("NSM gamepad button: id={} action='{}'", idCode, actionName);
+
+    if (action == userEvents->cancel || action == userEvents->tweenMenu ||
+        StringContains(actionName, "cancel") || StringContains(actionName, "tweenmenu") ||
+        StringContains(actionName, "back")) {
+        if (Prisma::IsLevelUpMenuOpen()) {
+            logger::debug("OnInput: Voltar ignorado pois o menu de Level Up esta ativo.");
+            return true;
+        }
+        logger::debug("OnInput: Botao Voltar pressionado. Chamando Prisma::TriggerBack()...");
+        Prisma::TriggerBack();
+        return true;
+    }
+
+    if (action == userEvents->up || actionName == "up" || StringContains(actionName, "dpad up")) {
+        return SendControllerActionThrottled("move_up", 80);
+    }
+    if (action == userEvents->down || actionName == "down" || StringContains(actionName, "dpad down")) {
+        return SendControllerActionThrottled("move_down", 80);
+    }
+    if (action == userEvents->left || actionName == "left" || StringContains(actionName, "dpad left")) {
+        return SendControllerActionThrottled("move_left", 80);
+    }
+    if (action == userEvents->right || actionName == "right" || StringContains(actionName, "dpad right")) {
+        return SendControllerActionThrottled("move_right", 80);
+    }
+
+    if (action == userEvents->accept || idCode == 0x1000 || idCode == 4096 ||
+        StringContains(actionName, "accept") || StringContains(actionName, "activate") ||
+        StringContains(actionName, "select") || StringContains(actionName, "jump")) {
+        return SendControllerActionThrottled("confirm", 120);
+    }
+
+    if (idCode == 9 || idCode == 0x0009 ||
+        StringContains(actionName, "left attack") || StringContains(actionName, "left hand") ||
+        StringContains(actionName, "left trigger") || StringContains(actionName, "ltrigger") ||
+        StringContains(actionName, "block") || StringContains(actionName, "zoom out")) {
+        return SendControllerActionThrottled("page_left", 120);
+    }
+
+    if (idCode == 10 || idCode == 0x000A ||
+        StringContains(actionName, "right attack") || StringContains(actionName, "right hand") ||
+        StringContains(actionName, "right trigger") || StringContains(actionName, "rtrigger") ||
+        StringContains(actionName, "attack") || StringContains(actionName, "zoom in")) {
+        return SendControllerActionThrottled("page_right", 120);
+    }
+
+    if (idCode == 0x0100 || idCode == 256 || StringContains(actionName, "left shoulder") || StringContains(actionName, "left bumper")) {
+        return SendControllerActionThrottled("rank_left", 120);
+    }
+    if (idCode == 0x0200 || idCode == 512 || StringContains(actionName, "right shoulder") || StringContains(actionName, "right bumper")) {
+        return SendControllerActionThrottled("rank_right", 120);
+    }
+
+    logger::info("NSM unmapped gamepad button: id={} action='{}'", idCode, actionName);
+    return false;
+}
+
+static bool HandleControllerThumbstickInput(RE::ThumbstickEvent* stick) {
+    if (!stick) return false;
+
+    if (!stick->IsLeft()) return true;
+
+    constexpr float deadzone = 0.85f;
+    const float x = stick->xValue;
+    const float y = stick->yValue;
+
+    if (std::hypot(x, y) < deadzone) {
+        return true;
+    }
+
+    char action[64];
+    std::snprintf(action, sizeof(action), "analog_move:%.3f:%.3f", x, y);
+    return SendControllerAnalogActionThrottled(action, 180);
+}
+
+bool OnInput(RE::InputEvent* event) { 
+    if (!event || Prisma::IsHidden()) return false;
+
+    MaintainControllerCursorHidden();
+
+    auto userEvents = RE::UserEvents::GetSingleton();
+    if (!userEvents) return false;
+
+    if (event->GetDevice() != RE::INPUT_DEVICE::kGamepad) {
+        return HandleKeyboardMouseInput(event, userEvents);
+    }
+
+    if (auto button = event->AsButtonEvent()) {
+        return HandleControllerButtonInput(button, userEvents);
+    }
+
+    if (auto stick = event->AsThumbstickEvent()) {
+        return HandleControllerThumbstickInput(stick);
+    }
+
+    return true;
 }
 
 using namespace RE;
@@ -174,7 +395,6 @@ public:
                     focusMenu->menuFlags.set(RE::UI_MENU_FLAGS::kFreezeFrameBackground, RE::UI_MENU_FLAGS::kTopmostRenderedMenu);
                 }
             }
-
         }
         return BSEventNotifyControl::kContinue;
     }

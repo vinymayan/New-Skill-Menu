@@ -2876,3 +2876,27 @@ body {
     color: #888;
     margin: 0 4px;
 }
+
+/* When controller input is active, suppress stale real-mouse hover scale. */
+html.nsm-controller-input .perk-node-container:not(.forced-hover),
+html.nsm-controller-input .perk-node-container:hover:not(.forced-hover),
+body.nsm-controller-input .perk-node-container:not(.forced-hover),
+body.nsm-controller-input .perk-node-container:hover:not(.forced-hover),
+#root.nsm-controller-input .perk-node-container:not(.forced-hover),
+#root.nsm-controller-input .perk-node-container:hover:not(.forced-hover),
+.controller-node-hover-disabled .perk-node-container:not(.forced-hover),
+.controller-node-hover-disabled .perk-node-container:hover:not(.forced-hover) {
+    transform: translate(-50%, -50%) !important;
+    z-index: 5 !important;
+}
+
+html.nsm-controller-input .perk-node-container:not(.forced-hover) .perk-icon-img,
+html.nsm-controller-input .perk-node-container:hover:not(.forced-hover) .perk-icon-img,
+body.nsm-controller-input .perk-node-container:not(.forced-hover) .perk-icon-img,
+body.nsm-controller-input .perk-node-container:hover:not(.forced-hover) .perk-icon-img,
+#root.nsm-controller-input .perk-node-container:not(.forced-hover) .perk-icon-img,
+#root.nsm-controller-input .perk-node-container:hover:not(.forced-hover) .perk-icon-img,
+.controller-node-hover-disabled .perk-node-container:not(.forced-hover) .perk-icon-img,
+.controller-node-hover-disabled .perk-node-container:hover:not(.forced-hover) .perk-icon-img {
+    transform: none !important;
+}

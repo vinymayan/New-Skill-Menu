@@ -1,4 +1,4 @@
-﻿{
+{
   "common": {
     "all": "All",
     "lvl": "Lvl",
@@ -34,7 +34,8 @@
     "not": "NOT",
     "warning": "Warning",
     "cw": "CW",
-    "ok": "OK"
+    "ok": "OK",
+    "owned": "Owned"
   },
   "header": {
     "name": "NAME",
