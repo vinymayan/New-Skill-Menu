@@ -9,6 +9,8 @@
 
 extern nlohmann::json GetSettings();
 
+static void ApplyInitialInputModeForMenuOpen();
+
 namespace MenuHooks {
 
     class LevelUpMenuHook {
@@ -48,7 +50,9 @@ namespace MenuHooks {
 
             if (a_message.type == RE::UI_MESSAGE_TYPE::kShow) {
                 //a_this->menuFlags.set(RE::UI_MENU_FLAGS::kFreezeFramePause);
+                ApplyInitialInputModeForMenuOpen();
                 Prisma::Show();
+                ApplyInitialInputModeForMenuOpen();
             }
             else if (a_message.type == RE::UI_MESSAGE_TYPE::kHide) {
                 Prisma::Hide();
@@ -150,6 +154,7 @@ static bool g_nsmControllerPointerMode = false;
 static float g_savedCursorX = 0.0f;
 static float g_savedCursorY = 0.0f;
 static bool g_hasSavedCursorPosition = false;
+static bool g_lastInputWasController = false;
 
 static void SetPrismaCursorHiddenByInputMode(bool hide) {
     auto cursor = RE::MenuCursor::GetSingleton();
@@ -214,6 +219,34 @@ static void SendInputMode(const char* mode) {
     Prisma::SendKeyPress(std::string("nsm:input_") + mode);
 }
 
+static void RememberInputDevice(RE::InputEvent* event) {
+    if (!event) {
+        return;
+    }
+
+    const auto device = event->GetDevice();
+    if (device == RE::INPUT_DEVICE::kGamepad) {
+        g_lastInputWasController = true;
+        return;
+    }
+
+    if (device == RE::INPUT_DEVICE::kKeyboard || device == RE::INPUT_DEVICE::kMouse) {
+        g_lastInputWasController = false;
+    }
+}
+
+static void ApplyInitialInputModeForMenuOpen() {
+    if (g_lastInputWasController) {
+        SetPrismaCursorHiddenByInputMode(true);
+        Prisma::SetInputCaptureForPointerMode(false);
+        Prisma::SendKeyPress("nsm:input_controller");
+    } else {
+        SetPrismaCursorHiddenByInputMode(false);
+        Prisma::SetInputCaptureForPointerMode(true);
+        Prisma::SendKeyPress("nsm:input_mouse");
+    }
+}
+
 static bool HandleKeyboardMouseInput(RE::InputEvent* event, RE::UserEvents* userEvents) {
     if (!event || !userEvents) return false;
 
@@ -237,7 +270,7 @@ static bool HandleKeyboardMouseInput(RE::InputEvent* event, RE::UserEvents* user
         StringContains(actionName, "escape") ||
         StringContains(actionName, "tab") ||
         idCode == 1 ||   // Escape
-        idCode == 15) {  // Tab
+        idCode == 15) {  // Tab 
         Prisma::TriggerBack();
         return true;
     }
@@ -329,7 +362,11 @@ static bool HandleControllerThumbstickInput(RE::ThumbstickEvent* stick) {
 }
 
 bool OnInput(RE::InputEvent* event) { 
-    if (!event || Prisma::IsHidden()) return false;
+    if (!event) return false;
+
+    RememberInputDevice(event);
+
+    if (Prisma::IsHidden()) return false;
 
     MaintainControllerCursorHidden();
 
@@ -411,7 +448,9 @@ public:
             // 2. Envia o comando para esconder (kHide) o TweenMenu
             msgQueue->AddMessage(RE::TweenMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
         }
+        ApplyInitialInputModeForMenuOpen();
         Prisma::Show();
+        ApplyInitialInputModeForMenuOpen();
         return BSEventNotifyControl::kContinue;
     }
 };

@@ -1980,13 +1980,14 @@ const SettingsModal = ({ settings, rules, customResources, formLists, onClose, o
 const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
     uiSettings, keyboardSelectedNodeId, onUpdateNodePosition,
     onUpdateNodes, onNodeClick, onTreeContextMenu, formLists,
-    availableReqs, availableTrees, onRequestBrowse, onLegendary, globalSettings, playerData, customResources }: { 
+    availableReqs, availableTrees, onRequestBrowse, onLegendary, globalSettings, playerData, customResources, onNodeMouseFocus }: { 
         treeData: SkillTreeData,
         isEditorMode: boolean,
         keyboardSelectedNodeId?: string | null,
         onUpdateNodePosition: (t: string, n: string, x: number, y: number) => void,
         onUpdateNodes?: (t: string, nodes: PerkNode[]) => void,
         onNodeClick?: (node: PerkNode, sourceTree?: SkillTreeData) => void,
+        onNodeMouseFocus?: (nodeId: string) => void,
         onTreeContextMenu?: (e: React.MouseEvent, name: string) => void,
         globalSettings?: SettingsData | null,
         uiSettings?: UISettings | null,
@@ -2315,11 +2316,16 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
 
     // OTIMIZAÇÃO: Estabilizar referências para que o memo() do PerkNodeElement funcione durante o pan/zoom.
     const handlePerkNodeHover = useCallback((p: PerkNode | null) => {
-        if (p) handleNodeMouseEnter(p);
-        else handleNodeMouseLeave();
-    }, [handleNodeMouseEnter, handleNodeMouseLeave]);
+        if (p) {
+            onNodeMouseFocus?.(p.id);
+            handleNodeMouseEnter(p);
+        } else {
+            handleNodeMouseLeave();
+        }
+    }, [handleNodeMouseEnter, handleNodeMouseLeave, onNodeMouseFocus]);
 
     const handlePerkNodeClick = useCallback((clickedNode: PerkNode) => {
+        onNodeMouseFocus?.(clickedNode.id);
         if (isEditorMode && connectingFrom) {
             if (connectingFrom !== clickedNode.id && onUpdateNodes) {
                 let newNodes = [...treeData.nodes];
@@ -2350,7 +2356,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
         } else if (!isEditorMode && onNodeClick) {
             onNodeClick(clickedNode, treeData);
         }
-    }, [isEditorMode, connectingFrom, onUpdateNodes, treeData, onNodeClick]);
+    }, [isEditorMode, connectingFrom, onUpdateNodes, treeData, onNodeClick, onNodeMouseFocus]);
 
     const handleTooltipMouseEnter = () => {
         if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
@@ -2636,6 +2642,7 @@ const SkillTreeDetail = ({
     const initialIndex = useMemo(() => Math.max(0, trees.findIndex(t => t.name === initialSkillName)), [trees, initialSkillName]);
     const [currentIndex, setCurrentIndex] = useState(initialIndex);
     const [keyboardNodeId, setKeyboardNodeId] = useState<string | null>(null);
+    const lastKeyboardNodeMoveMsRef = useRef(0);
     const [isCtrlPressed, setIsCtrlPressed] = useState(false);
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => { if (e.key === 'Control') setIsCtrlPressed(true); };
@@ -2699,7 +2706,6 @@ const SkillTreeDetail = ({
 
             if (action === 'input_mouse') {
                 showCursorForMouseInput();
-                setKeyboardNodeId(null);
                 return;
             }
 
@@ -2818,8 +2824,19 @@ const SkillTreeDetail = ({
             const action = keyToNSMAction(e.key);
             if (!action) return;
 
+            const isNodeMoveAction = action === 'move_up' || action === 'move_down' || action === 'move_left' || action === 'move_right';
+            if (isNodeMoveAction && e.repeat) {
+                const now = performance.now();
+                if (now - lastKeyboardNodeMoveMsRef.current < 150) {
+                    e.preventDefault();
+                    return;
+                }
+                lastKeyboardNodeMoveMsRef.current = now;
+            } else if (isNodeMoveAction) {
+                lastKeyboardNodeMoveMsRef.current = performance.now();
+            }
+
             showCursorForMouseInput();
-            setKeyboardNodeId(null);
             e.preventDefault();
             handleInputAction(action);
         };
@@ -2833,7 +2850,6 @@ const SkillTreeDetail = ({
 
         const handleMouseModeInput = () => {
             showCursorForMouseInput();
-            setKeyboardNodeId(null);
         };
 
         window.addEventListener('keydown', handleKeyDown);
@@ -2875,6 +2891,11 @@ const SkillTreeDetail = ({
                                 onUpdateNodePosition={onUpdateNodePosition}
                                 onUpdateNodes={onUpdateNodes}
                                 onNodeClick={onNodeClick}
+                                onNodeMouseFocus={(nodeId) => {
+                                    if (tree.name === trees[currentIndex]?.name) {
+                                        setKeyboardNodeId(nodeId);
+                                    }
+                                }}
                                 onTreeContextMenu={onTreeContextMenu}
                                 uiSettings={uiSettings}
                                 onLegendary={onLegendary}
@@ -4529,6 +4550,8 @@ function App() {
         playSound('UISkillsFocusSD');
     }, [categories, activeCategory]);
 
+    const mainKeyboardRepeatRef = useRef<{ action: string; time: number }>({ action: '', time: 0 });
+
     useEffect(() => {
         const handleInputAction = (action: NSMInputAction) => {
             if (action === 'input_controller') {
@@ -4592,6 +4615,18 @@ function App() {
 
             const action = keyToNSMAction(e.key);
             if (!action) return;
+
+            const isMainTreeRepeatAction = action === 'move_left' || action === 'move_right' || action === 'page_left' || action === 'page_right';
+            if (isMainTreeRepeatAction && e.repeat) {
+                const now = performance.now();
+                if (mainKeyboardRepeatRef.current.action === action && now - mainKeyboardRepeatRef.current.time < 180) {
+                    e.preventDefault();
+                    return;
+                }
+                mainKeyboardRepeatRef.current = { action, time: now };
+            } else if (isMainTreeRepeatAction) {
+                mainKeyboardRepeatRef.current = { action, time: performance.now() };
+            }
 
             showCursorForMouseInput();
             e.preventDefault();
