@@ -19,6 +19,7 @@ public:
     static void SetLevelUpMenuOpen(bool isOpen);
     static bool IsLevelUpMenuOpen();
     static void TriggerBack();
+
 };
 
 

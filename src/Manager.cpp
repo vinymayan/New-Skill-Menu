@@ -1,4 +1,10 @@
-﻿#include "Manager.h"
+#include "Manager.h"
+#include "Prisma.h"
+#include "API_ActorValueGenerator.h"
+
+#include <cctype>
+#include <filesystem>
+#include <fstream>
 
 void Manager::PopulateAllLists() {
     if (_isPopulated) return;
@@ -63,6 +69,38 @@ void Manager::PopulateAllLists() {
         if (cb) cb();
     }
     _readyCallbacks.clear();
+}
+
+void Manager::RefreshLists(std::string_view a_signatures) {
+    const auto includes = [a_signatures](std::string_view a_signature) {
+        std::size_t begin = 0;
+        while (begin <= a_signatures.size()) {
+            const auto end = a_signatures.find(',', begin);
+            auto token = a_signatures.substr(begin, end == std::string_view::npos ? a_signatures.size() - begin : end - begin);
+            while (!token.empty() && token.front() == ' ') token.remove_prefix(1);
+            while (!token.empty() && token.back() == ' ') token.remove_suffix(1);
+            if (token == a_signature) return true;
+            if (end == std::string_view::npos) break;
+            begin = end + 1;
+        }
+        return false;
+    };
+
+    if (a_signatures.empty() || includes("All")) {
+        _isPopulated = false;
+        PopulateAllLists();
+        return;
+    }
+    if (includes("PERK")) {
+        PopulateList<RE::BGSPerk>("Perk", [](RE::BGSPerk* perk) {
+            return (perk->formFlags & RE::BGSPerk::RecordFlags::kNonPlayable) == 0 && perk->data.playable;
+        });
+    }
+    if (includes("SPEL")) PopulateList<RE::SpellItem>("Spell", [](RE::SpellItem* spell) { return spell != nullptr; });
+    if (includes("FACT")) PopulateList<RE::TESFaction>("Faction", [](RE::TESFaction* faction) { return faction != nullptr; });
+    if (includes("BOOK")) PopulateList<RE::TESObjectBOOK>("Book", [](RE::TESObjectBOOK* book) { return book != nullptr; });
+    if (includes("SHOU")) PopulateList<RE::TESShout>("Shout", [](RE::TESShout* shout) { return shout != nullptr; });
+    if (includes("GLOB")) PopulateList<RE::TESGlobal>("Global", [](RE::TESGlobal* global) { return global != nullptr; });
 }
 
 const std::vector<InternalFormInfo>& Manager::GetList(const std::string& typeName) {
@@ -230,17 +268,184 @@ void Manager::PopulateList(const std::string& a_typeName, std::function<bool(T*)
 // Declare a função onde quer que ela esteja no seu código
 extern nlohmann::json GetLoadedSkillTreeConfigs();
 
+using json = nlohmann::json;
+extern json GetEffectiveSettings(int targetLevel);
+extern json GetUISettings();
+extern json GetSettings();
+
+// --- CONTROLE DE NOTIFICAÇÕES ---
+static std::mutex _notificationMutex;
+static std::unordered_set<std::string> _pendingNotifications;
+
+static std::vector<std::string> SplitManagerString(const std::string& s, char delimiter) {
+    std::vector<std::string> tokens;
+    std::string token;
+    std::istringstream tokenStream(s);
+    while (std::getline(tokenStream, token, delimiter)) {
+        tokens.push_back(token);
+    }
+    return tokens;
+}
+
+static RE::FormID ParseManagerFormIDString(const std::string& formIDStr) {
+    if (formIDStr.empty()) return 0;
+
+    auto tokens = SplitManagerString(formIDStr, '|');
+    if (tokens.size() == 2) {
+        try {
+            uint32_t localID = std::stoul(tokens[1], nullptr, 16);
+            auto dataHandler = RE::TESDataHandler::GetSingleton();
+            return dataHandler ? dataHandler->LookupFormID(localID, tokens[0]) : 0;
+        }
+        catch (...) {
+            return 0;
+        }
+    }
+
+    try {
+        return static_cast<RE::FormID>(std::stoul(formIDStr, nullptr, 16));
+    }
+    catch (...) {
+        return 0;
+    }
+}
+
+static RE::BGSPerk* ResolvePerkString(const std::string& perkId) {
+    RE::FormID formID = ParseManagerFormIDString(perkId);
+    return formID != 0 ? RE::TESForm::LookupByID<RE::BGSPerk>(formID) : nullptr;
+}
+
+std::string Manager::GetCustomSkillActorValueName(const std::string& skillId) const {
+    std::string result = "NSM_";
+    for (unsigned char c : skillId) {
+        result.push_back(std::isalnum(c) ? static_cast<char>(c) : '_');
+    }
+    if (result == "NSM_") {
+        result += "UnknownSkill";
+    }
+    return result;
+}
+
+RE::ActorValue Manager::ResolveCustomSkillActorValue(const std::string& skillId) const {
+    if (skillId.empty() || AVG::API::RequestInterface(false) == nullptr) {
+        return RE::ActorValue::kNone;
+    }
+
+    AVG::ExtraValue extraValue(GetCustomSkillActorValueName(skillId));
+    RE::ActorValue av = extraValue.Resolve();
+    if (av == RE::ActorValue::kNone || av == RE::ActorValue::kTotal) {
+        return RE::ActorValue::kNone;
+    }
+    return av;
+}
+
+RE::Actor* Manager::ResolveActorFromFormID(RE::FormID actorFormID) const {
+    if (actorFormID == 0) return nullptr;
+    if (actorFormID == player_refid) {
+        return RE::PlayerCharacter::GetSingleton();
+    }
+    return RE::TESForm::LookupByID<RE::Actor>(actorFormID);
+}
+void Manager::EnsureActorValueGeneratorConfig() {
+    try {
+        std::filesystem::path dir("Data\\SKSE\\Plugin\\ActorValueData");
+        std::filesystem::create_directories(dir);
+        std::filesystem::path filePath = dir / "NewSkillMenu_AVG.toml";
+
+        std::ofstream file(filePath, std::ios::trunc);
+        if (!file.is_open()) {
+            logger::warn("Failed to write ActorValueGenerator config at {}", filePath.string());
+            return;
+        }
+
+        file << "# Auto-generated by New Skill Menu. Regenerate by loading the game after editing custom skill trees.\n\n";
+        for (const auto& [id, skill] : customSkillsData) {
+            file << "[" << GetCustomSkillActorValueName(id) << "]\n";
+            file << "type = \"Adaptive\"\n";
+            file << "displayName = \"" << skill.displayName << "\"\n";
+            file << "default.formula = \"" << skill.initialLevel << "\"\n";
+            file << "default.type = \"Implicit\"\n\n";
+        }
+    }
+    catch (const std::exception& e) {
+        logger::warn("Failed to generate ActorValueGenerator config: {}", e.what());
+    }
+}
+
+RE::FormID Manager::GetActorXPKey(RE::Actor* actor) const {
+    return actor ? actor->GetFormID() : 0;
+}
+
+float Manager::GetActorXP(RE::Actor* actor, const std::string& skillId) {
+    RE::FormID key = GetActorXPKey(actor);
+    if (key == 0 || skillId.empty()) return 0.0f;
+
+    auto actorIt = actorCustomSkillXP.find(key);
+    if (actorIt != actorCustomSkillXP.end()) {
+        auto skillIt = actorIt->second.find(skillId);
+        if (skillIt != actorIt->second.end()) {
+            return skillIt->second;
+        }
+    }
+
+    if (actor->IsPlayerRef()) {
+        auto legacyIt = playerCustomSkills.find(skillId);
+        if (legacyIt != playerCustomSkills.end()) {
+            return legacyIt->second.currentXP;
+        }
+    }
+
+    return 0.0f;
+}
+
+void Manager::SetActorXP(RE::Actor* actor, const std::string& skillId, float xp) {
+    RE::FormID key = GetActorXPKey(actor);
+    if (key == 0 || skillId.empty() || !std::isfinite(xp)) return;
+
+    if (xp <= 0.001f) {
+        auto actorIt = actorCustomSkillXP.find(key);
+        if (actorIt != actorCustomSkillXP.end()) {
+            actorIt->second.erase(skillId);
+            if (actorIt->second.empty()) {
+                actorCustomSkillXP.erase(actorIt);
+            }
+        }
+        xp = 0.0f;
+    }
+    else {
+        actorCustomSkillXP[key][skillId] = xp;
+    }
+
+    if (actor->IsPlayerRef()) {
+        auto dataIt = customSkillsData.find(skillId);
+        auto& state = playerCustomSkills[skillId];
+        if (dataIt != customSkillsData.end() && state.currentLevel == 15 && state.currentXP == 0.0f && state.bonusLevel == 0) {
+            state.currentLevel = dataIt->second.initialLevel;
+        }
+        state.currentXP = xp;
+    }
+}
+
+void Manager::SyncLegacyPlayerStateToActorValues() {
+    auto player = RE::PlayerCharacter::GetSingleton();
+    if (!player) return;
+
+    for (const auto& [skillId, state] : playerCustomSkills) {
+        if (!customSkillsData.contains(skillId)) continue;
+        SetCustomSkillLevel(player, skillId, state.currentLevel);
+        SetCustomSkillBonus(player, skillId, state.bonusLevel);
+        SetActorXP(player, skillId, state.currentXP);
+    }
+}
+
 void Manager::LoadCustomSkills() {
     nlohmann::json configs = GetLoadedSkillTreeConfigs();
 
     for (const auto& j : configs) {
         if (j.contains("isVanilla") && !j["isVanilla"].get<bool>()) {
             CustomSkill skill;
-            skill.id = j.value("name", "UnknownSkill"); // O name agora atua puramente como Unique ID interno
-
-            // LÊ O DISPLAY NAME (Se não existir, cai pro nome base)
+            skill.id = j.value("name", "UnknownSkill");
             skill.displayName = j.value("displayName", skill.id);
-
             skill.initialLevel = j.value("initialLevel", 15);
             skill.isVanilla = false;
             skill.advancesPlayerLevel = j.value("advancesPlayerLevel", false);
@@ -256,138 +461,284 @@ void Manager::LoadCustomSkills() {
             customSkillsData[skill.id] = skill;
 
             if (playerCustomSkills.find(skill.id) == playerCustomSkills.end()) {
-                playerCustomSkills[skill.id] = { skill.initialLevel, 0.0f, 0 };
+                playerCustomSkills[skill.id] = { skill.initialLevel, GetActorXP(RE::PlayerCharacter::GetSingleton(), skill.id), 0 };
             }
 
             logger::info("Custom Skill carregada: {} (Display: {})", skill.id, skill.displayName);
         }
     }
+
+    EnsureActorValueGeneratorConfig();
+    SyncLegacyPlayerStateToActorValues();
 }
 
-using json = nlohmann::json;
-extern json GetEffectiveSettings(int targetLevel);
-extern json GetUISettings();
-extern json GetSettings();
+int Manager::GetCustomSkillLevel(RE::Actor* actor, const std::string& skillId) {
+    auto dataIt = customSkillsData.find(skillId);
+    int fallback = dataIt != customSkillsData.end() ? dataIt->second.initialLevel : 1;
+    if (!actor || skillId.empty()) return fallback;
 
-// --- CONTROLE DE NOTIFICAÇÕES ---
-static std::mutex _notificationMutex;
-// Armazena quais skills já têm uma thread aguardando disparar.
-static std::unordered_set<std::string> _pendingNotifications;
+    RE::ActorValue av = ResolveCustomSkillActorValue(skillId);
+    auto avOwner = actor->AsActorValueOwner();
+    if (av != RE::ActorValue::kNone && avOwner) {
+        return static_cast<int>(std::round(avOwner->GetBaseActorValue(av)));
+    }
 
+    if (actor->IsPlayerRef()) {
+        auto it = playerCustomSkills.find(skillId);
+        return it != playerCustomSkills.end() ? it->second.currentLevel : fallback;
+    }
+
+    return fallback;
+}
+
+void Manager::SetCustomSkillLevel(RE::Actor* actor, const std::string& skillId, int level) {
+    if (!actor || skillId.empty()) return;
+
+    RE::ActorValue av = ResolveCustomSkillActorValue(skillId);
+    auto avOwner = actor->AsActorValueOwner();
+    if (av != RE::ActorValue::kNone && avOwner) {
+        avOwner->SetBaseActorValue(av, static_cast<float>(level));
+    }
+
+    if (actor->IsPlayerRef()) {
+        auto& state = playerCustomSkills[skillId];
+        state.currentLevel = level;
+    }
+}
+
+float Manager::GetCustomSkillXP(RE::Actor* actor, const std::string& skillId) {
+    return GetActorXP(actor, skillId);
+}
+
+void Manager::SetCustomSkillXP(RE::Actor* actor, const std::string& skillId, float xp) {
+    SetActorXP(actor, skillId, xp);
+}
+
+int Manager::GetCustomSkillBonus(RE::Actor* actor, const std::string& skillId) {
+    if (!actor || skillId.empty()) return 0;
+
+    RE::ActorValue av = ResolveCustomSkillActorValue(skillId);
+    auto avOwner = actor->AsActorValueOwner();
+    if (av != RE::ActorValue::kNone && avOwner) {
+        float baseValue = avOwner->GetBaseActorValue(av);
+        float permanentValue = avOwner->GetPermanentActorValue(av);
+        return static_cast<int>(std::round(permanentValue - baseValue));
+    }
+
+    if (actor->IsPlayerRef()) {
+        auto it = playerCustomSkills.find(skillId);
+        return it != playerCustomSkills.end() ? it->second.bonusLevel : 0;
+    }
+
+    return 0;
+}
+
+int Manager::GetCustomSkillTotalLevel(RE::Actor* actor, const std::string& skillId) {
+    return GetCustomSkillLevel(actor, skillId) + GetCustomSkillBonus(actor, skillId);
+}
+
+void Manager::SetCustomSkillBonus(RE::Actor* actor, const std::string& skillId, int amount) {
+    if (!actor || skillId.empty()) return;
+
+    RE::ActorValue av = ResolveCustomSkillActorValue(skillId);
+    auto avOwner = actor->AsActorValueOwner();
+    if (av != RE::ActorValue::kNone && avOwner) {
+        int currentBonus = GetCustomSkillBonus(actor, skillId);
+        int delta = amount - currentBonus;
+        if (delta != 0) {
+            avOwner->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kPermanent, av, static_cast<float>(delta));
+        }
+    }
+
+    if (actor->IsPlayerRef()) {
+        playerCustomSkills[skillId].bonusLevel = amount;
+        Prisma::SendUpdateToUI();
+    }
+}
+
+void Manager::ModCustomSkillBonus(RE::Actor* actor, const std::string& skillId, int amount) {
+    SetCustomSkillBonus(actor, skillId, GetCustomSkillBonus(actor, skillId) + amount);
+}
+
+bool Manager::HasCustomPerk(RE::Actor* actor, const std::string& perkId) {
+    auto perk = ResolvePerkString(perkId);
+    return actor && perk && actor->HasPerk(perk);
+}
+
+bool Manager::AddCustomPerk(RE::Actor* actor, const std::string& perkId) {
+    auto perk = ResolvePerkString(perkId);
+    if (!actor || !perk || actor->HasPerk(perk)) return false;
+    actor->AddPerk(perk);
+    return true;
+}
+
+bool Manager::RemoveCustomPerk(RE::Actor* actor, const std::string& perkId) {
+    auto perk = ResolvePerkString(perkId);
+    if (!actor || !perk || !actor->HasPerk(perk)) return false;
+    actor->RemovePerk(perk);
+    return true;
+}
+
+void Manager::RemoveCustomSkillState(const std::string& skillId) {
+    customSkillsData.erase(skillId);
+    playerCustomSkills.erase(skillId);
+    for (auto it = actorCustomSkillXP.begin(); it != actorCustomSkillXP.end();) {
+        it->second.erase(skillId);
+        if (it->second.empty()) {
+            it = actorCustomSkillXP.erase(it);
+        }
+        else {
+            ++it;
+        }
+    }
+}
+
+void Manager::AddCustomSkillXPForActorID(RE::FormID actorFormID, const std::string& skillId, float xpAmount) {
+    AddCustomSkillXPForActor(ResolveActorFromFormID(actorFormID), skillId, xpAmount);
+}
+
+int Manager::GetCustomSkillLevelForActorID(RE::FormID actorFormID, const std::string& skillId) {
+    return GetCustomSkillLevel(ResolveActorFromFormID(actorFormID), skillId);
+}
+
+float Manager::GetCustomSkillXPForActorID(RE::FormID actorFormID, const std::string& skillId) {
+    return GetCustomSkillXP(ResolveActorFromFormID(actorFormID), skillId);
+}
+
+int Manager::GetCustomSkillTotalLevelForActorID(RE::FormID actorFormID, const std::string& skillId) {
+    return GetCustomSkillTotalLevel(ResolveActorFromFormID(actorFormID), skillId);
+}
+
+int Manager::GetCustomSkillBonusForActorID(RE::FormID actorFormID, const std::string& skillId) {
+    return GetCustomSkillBonus(ResolveActorFromFormID(actorFormID), skillId);
+}
+
+void Manager::ModCustomSkillBonusForActorID(RE::FormID actorFormID, const std::string& skillId, int amount) {
+    ModCustomSkillBonus(ResolveActorFromFormID(actorFormID), skillId, amount);
+}
+
+void Manager::SetCustomSkillBonusForActorID(RE::FormID actorFormID, const std::string& skillId, int amount) {
+    SetCustomSkillBonus(ResolveActorFromFormID(actorFormID), skillId, amount);
+}
+
+bool Manager::HasCustomPerkForActorID(RE::FormID actorFormID, const std::string& perkId) {
+    return HasCustomPerk(ResolveActorFromFormID(actorFormID), perkId);
+}
+
+bool Manager::AddCustomPerkForActorID(RE::FormID actorFormID, const std::string& perkId) {
+    return AddCustomPerk(ResolveActorFromFormID(actorFormID), perkId);
+}
+
+bool Manager::RemoveCustomPerkForActorID(RE::FormID actorFormID, const std::string& perkId) {
+    return RemoveCustomPerk(ResolveActorFromFormID(actorFormID), perkId);
+}
 void Manager::AddCustomSkillXP(const std::string& skillId, float xpAmount) {
-    // 1. Bloqueia para atualizar os dados brutos de XP de forma segura
-    std::lock_guard<std::mutex> updateLock(_notificationMutex);
+    AddCustomSkillXPForActor(RE::PlayerCharacter::GetSingleton(), skillId, xpAmount);
+}
 
-    if (customSkillsData.find(skillId) == customSkillsData.end()) return;
+void Manager::AddCustomSkillXPForActor(RE::Actor* actor, const std::string& skillId, float xpAmount) {
+    if (!actor || skillId.empty() || !std::isfinite(xpAmount) || xpAmount <= 0.0f) return;
 
-    auto& state = playerCustomSkills[skillId];
-    auto& data = customSkillsData[skillId];
+    int startLevelSnapshot = 0;
+    std::string dispName;
+    bool shouldScheduleNotification = false;
+    bool playerUpdateAlreadyPending = false;
 
-    // Snapshot do nível ANTES de aplicar o XP
-    int startLevelSnapshot = state.currentLevel;
+    {
+        std::lock_guard<std::mutex> updateLock(_notificationMutex);
 
-    // --- APLICAÇÃO MATEMÁTICA DE XP ---
-    float finalXp = (xpAmount * data.expFormula.useMult) + data.expFormula.useOffset;
-    state.currentXP += finalXp;
+        auto skillDataIt = customSkillsData.find(skillId);
+        if (skillDataIt == customSkillsData.end()) return;
 
-    json settings = GetSettings();
-    int maxCap = settings["base"].value("skillCap", 100);
+        auto& data = skillDataIt->second;
+        dispName = data.displayName;
 
-    // Lógica de Level Up (Simulação)
-    float reqXp = GetRequiredXP(skillId, state.currentLevel);
+        int currentLevel = GetCustomSkillLevel(actor, skillId);
+        float currentXP = GetCustomSkillXP(actor, skillId);
+        startLevelSnapshot = currentLevel;
 
-    // Loop para múltiplos level ups de uma vez
-    while (state.currentXP >= (reqXp - 0.001f) && state.currentLevel < maxCap) {
-        state.currentXP -= reqXp;
-        if (state.currentXP < 0.0f) state.currentXP = 0.0f;
+        float finalXp = (xpAmount * data.expFormula.useMult) + data.expFormula.useOffset;
+        currentXP += finalXp;
 
-        state.currentLevel++;
-        reqXp = GetRequiredXP(skillId, state.currentLevel);
+        json settings = GetSettings();
+        int maxCap = settings.contains("base") ? settings["base"].value("skillCap", 100) : 100;
 
-        // Se configurado, avança o nível do personagem (Progressão Vanilla)
-        if (data.advancesPlayerLevel) {
-            auto player = RE::PlayerCharacter::GetSingleton();
-            if (player) {
-                auto& rt = player->GetPlayerRuntimeData();
-                if (rt.skills && rt.skills->data) {
-                    rt.skills->data->xp += static_cast<float>(state.currentLevel);
+        float reqXp = GetRequiredXP(skillId, currentLevel);
+        if (!std::isfinite(reqXp) || reqXp <= 0.001f) reqXp = 1.0f;
+
+        while (currentXP >= (reqXp - 0.001f) && currentLevel < maxCap) {
+            currentXP -= reqXp;
+            if (currentXP < 0.0f) currentXP = 0.0f;
+
+            currentLevel++;
+            reqXp = GetRequiredXP(skillId, currentLevel);
+            if (!std::isfinite(reqXp) || reqXp <= 0.001f) reqXp = 1.0f;
+
+            if (data.advancesPlayerLevel && actor->IsPlayerRef()) {
+                auto player = RE::PlayerCharacter::GetSingleton();
+                if (player) {
+                    auto& rt = player->GetPlayerRuntimeData();
+                    if (rt.skills && rt.skills->data) {
+                        rt.skills->data->xp += static_cast<float>(currentLevel);
+                    }
                 }
+            }
+        }
+
+        if (currentLevel >= maxCap) {
+            currentXP = 0.0f;
+        }
+
+        SetCustomSkillLevel(actor, skillId, currentLevel);
+        SetActorXP(actor, skillId, currentXP);
+
+        if (actor->IsPlayerRef()) {
+            playerUpdateAlreadyPending = _pendingNotifications.find(skillId) != _pendingNotifications.end();
+            if (!playerUpdateAlreadyPending) {
+                _pendingNotifications.insert(skillId);
+                shouldScheduleNotification = true;
             }
         }
     }
 
-    // Cap level check
-    if (state.currentLevel >= maxCap) {
-        state.currentXP = 0.0f;
-        reqXp = 1.0f;
-    }
+    if (!actor->IsPlayerRef()) return;
 
-    // --- LÓGICA VISUAL (DEBOUNCE) ---
+    Prisma::SendUpdateToUI();
+    if (playerUpdateAlreadyPending) return;
+    if (!shouldScheduleNotification) return;
 
-    // Se já existe uma notificação agendada (pendente) para essa skill, 
-    // NÃO criamos outra thread. A thread existente pegará o valor acumulado atualizado.
-    if (_pendingNotifications.find(skillId) != _pendingNotifications.end()) {
-        return;
-    }
-
-    // Marca como pendente para bloquear novas threads
-    _pendingNotifications.insert(skillId);
-    std::string dispName = data.displayName;
-
-    // Cria uma thread destacada para esperar o XP "acumular" (Debounce)
     std::thread([this, skillId, dispName, startLevelSnapshot]() {
-        // Espera 1.5s. Se o jogador ganhar mais XP nesse tempo, a thread espera e pega tudo junto.
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));
 
-        // Agenda a execução na Thread Principal (UI Task)
         SKSE::GetTaskInterface()->AddUITask([this, skillId, dispName, startLevelSnapshot]() {
             int currentRealLevel;
             float currentRealXP;
             float reqXpForCalc;
 
-            // Bloqueio rápido apenas para ler os dados finais e limpar a flag
             {
                 std::lock_guard<std::mutex> guard(_notificationMutex);
-
-                // Remove da lista de pendentes DENTRO da task da UI.
-                // Isso impede condições de corrida.
                 _pendingNotifications.erase(skillId);
 
-                if (playerCustomSkills.find(skillId) == playerCustomSkills.end()) return;
+                auto player = RE::PlayerCharacter::GetSingleton();
+                if (!player) return;
 
-                auto& s = playerCustomSkills[skillId];
-                currentRealLevel = s.currentLevel;
-                currentRealXP = s.currentXP;
+                currentRealLevel = GetCustomSkillLevel(player, skillId);
+                currentRealXP = GetCustomSkillXP(player, skillId);
                 reqXpForCalc = GetRequiredXP(skillId, currentRealLevel);
             }
 
-            // --- CÁLCULO DE PORCENTAGEM SEGURO ---
-            if (reqXpForCalc <= 0.001f) reqXpForCalc = 1.0f; // Evita divisão por zero
+            if (reqXpForCalc <= 0.001f) reqXpForCalc = 1.0f;
 
             float endPct = currentRealXP / reqXpForCalc;
-            float startPct = 0.0f;
+            float startPct = currentRealLevel > startLevelSnapshot ? 0.0f : std::max(0.0f, endPct - 0.05f);
 
-            // Define o ponto de partida da barra
-            if (currentRealLevel > startLevelSnapshot) {
-                // Se subiu de nível, a barra começa vazia (0%) e vai até onde parou no novo nível
-                startPct = 0.0f;
-            }
-            else {
-                // Se não subiu de nível, simulamos uma animação curta (progresso atual - 5%)
-                // Isso evita ter que guardar o "xp anterior" exato, que complica o código.
-                startPct = std::max(0.0f, endPct - 0.05f);
-            }
-
-            // CLAMP CRÍTICO: O Flash do Skyrim trava se receber valores < 0 ou > 1 ou NaN
             startPct = std::clamp(startPct, 0.0f, 1.0f);
             endPct = std::clamp(endPct, 0.0f, 1.0f);
 
-            // Se for muito pequeno (erro de float) e não houve level up, ignoramos para não travar
             if (std::abs(endPct - startPct) < 0.001f && currentRealLevel == startLevelSnapshot) {
                 return;
             }
 
-            // --- INTERAÇÃO COM A UI (SCALEFORM) ---
             const auto ui = RE::UI::GetSingleton();
             if (!ui) return;
 
@@ -397,36 +748,26 @@ void Manager::AddCustomSkillXP(const std::string& skillId, float xpAmount) {
             auto movie = menu->uiMovie;
             RE::GFxValue questUpdateInstance;
 
-            // Pega a instância base do gerenciador de notificações
             if (movie->GetVariable(&questUpdateInstance, "_root.HUDMovieBaseInstance.QuestUpdateBaseInstance")) {
-
-                // NOTA: Não existe um método "Clear" exposto publicamente no Scaleform vanilla seguro.
-                // A melhor forma de "limpar" é garantir que não enviamos lixo (validado acima)
-                // e confiar na fila interna do QuestUpdateBaseInstance que gerencia sequências.
-                // Se você realmente quiser tentar limpar, seria necessário acesso avançado aos arrays do Flash,
-                // o que é arriscado. A validação de input acima resolve 99% dos "stuck bars".
-
                 json uiSettings = GetUISettings();
                 std::string finalName = (uiSettings.value("hideLockedTreeNames", false) && currentRealLevel <= 0)
                     ? "????" : dispName;
 
                 RE::GFxValue args[8];
-                args[0] = finalName.c_str();       // aNotificationText
-                args[1] = "";                      // aStatus
-                args[2] = "UISkillIncreaseSD";     // aSoundID (Som oficial de Skill Up)
-                args[3] = 0;                       // aObjectiveCount
-                args[4] = 1;                       // aNotificationType (1 = Skill)
-                args[5] = currentRealLevel;        // aLevel (Nível ATUAL)
-                args[6] = startPct;                // aStartPercent (0.0 a 1.0)
-                args[7] = endPct;                  // aEndPercent (0.0 a 1.0)
+                args[0] = finalName.c_str();
+                args[1] = "";
+                args[2] = "UISkillIncreaseSD";
+                args[3] = 0;
+                args[4] = 1;
+                args[5] = currentRealLevel;
+                args[6] = startPct;
+                args[7] = endPct;
 
-                // Dispara a notificação
                 questUpdateInstance.Invoke("ShowNotification", nullptr, args, 8);
             }
             });
-        }).detach(); // Solta a thread para rodar em paralelo
+        }).detach();
 }
-
 // Calculo do Threshold de XP (Pode ser ajustado para simular 100% a curva vanilla se quiser)
 float Manager::GetRequiredXP(const std::string& skillId, int level) {
     if (customSkillsData.find(skillId) != customSkillsData.end()) {
@@ -451,19 +792,34 @@ float Manager::GetRequiredXP(const std::string& skillId, int level) {
 
 // --- LOGICA DE SAVE / LOAD DO SKSE ---
 void Manager::Save(SKSE::SerializationInterface* a_intfc) {
-    if (!a_intfc->OpenRecord('SKIL', 2)) return; 
+    if (!a_intfc->OpenRecord('SKIL', 3)) return;
 
-    std::size_t count = playerCustomSkills.size();
-    a_intfc->WriteRecordData(&count, sizeof(count));
+    uint32_t actorCount = 0;
+    for (const auto& [actorId, skills] : actorCustomSkillXP) {
+        if (!skills.empty()) actorCount++;
+    }
 
-    for (const auto& [id, state] : playerCustomSkills) {
-        std::size_t idLen = id.length();
-        a_intfc->WriteRecordData(&idLen, sizeof(idLen));
-        a_intfc->WriteRecordData(id.data(), idLen);
+    a_intfc->WriteRecordData(&actorCount, sizeof(actorCount));
 
-        a_intfc->WriteRecordData(&state.currentLevel, sizeof(state.currentLevel));
-        a_intfc->WriteRecordData(&state.currentXP, sizeof(state.currentXP));
-        a_intfc->WriteRecordData(&state.bonusLevel, sizeof(state.bonusLevel)); 
+    for (const auto& [actorId, skills] : actorCustomSkillXP) {
+        if (skills.empty()) continue;
+
+        a_intfc->WriteRecordData(&actorId, sizeof(actorId));
+
+        uint32_t skillCount = 0;
+        for (const auto& [skillId, xp] : skills) {
+            if (!skillId.empty() && std::isfinite(xp) && xp > 0.001f) skillCount++;
+        }
+        a_intfc->WriteRecordData(&skillCount, sizeof(skillCount));
+
+        for (const auto& [skillId, xp] : skills) {
+            if (skillId.empty() || !std::isfinite(xp) || xp <= 0.001f) continue;
+
+            uint32_t idLen = static_cast<uint32_t>(skillId.length());
+            a_intfc->WriteRecordData(&idLen, sizeof(idLen));
+            a_intfc->WriteRecordData(skillId.data(), idLen);
+            a_intfc->WriteRecordData(&xp, sizeof(xp));
+        }
     }
 }
 
@@ -472,30 +828,73 @@ void Manager::Load(SKSE::SerializationInterface* a_intfc) {
     uint32_t version;
     uint32_t length;
 
+    actorCustomSkillXP.clear();
+    playerCustomSkills.clear();
+
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
-        if (type == 'SKIL') {
+        if (type != 'SKIL') continue;
+
+        if (version >= 3) {
+            uint32_t actorCount = 0;
+            if (!a_intfc->ReadRecordData(&actorCount, sizeof(actorCount))) continue;
+
+            for (uint32_t i = 0; i < actorCount; ++i) {
+                RE::FormID oldActorId = 0;
+                if (!a_intfc->ReadRecordData(&oldActorId, sizeof(oldActorId))) break;
+
+                RE::FormID actorId = 0;
+                bool resolved = a_intfc->ResolveFormID(oldActorId, actorId);
+                if (!resolved && oldActorId == player_refid) {
+                    actorId = player_refid;
+                    resolved = true;
+                }
+
+                uint32_t skillCount = 0;
+                if (!a_intfc->ReadRecordData(&skillCount, sizeof(skillCount))) break;
+
+                for (uint32_t j = 0; j < skillCount; ++j) {
+                    uint32_t idLen = 0;
+                    if (!a_intfc->ReadRecordData(&idLen, sizeof(idLen))) break;
+                    if (idLen == 0 || idLen > 512) break;
+
+                    std::string id(idLen, '\0');
+                    if (!a_intfc->ReadRecordData(id.data(), idLen)) break;
+
+                    float xp = 0.0f;
+                    if (!a_intfc->ReadRecordData(&xp, sizeof(xp))) break;
+
+                    if (resolved && std::isfinite(xp) && xp > 0.001f) {
+                        actorCustomSkillXP[actorId][id] = xp;
+                    }
+                }
+            }
+        }
+        else {
             std::size_t count;
             if (!a_intfc->ReadRecordData(&count, sizeof(count))) continue;
 
             for (std::size_t i = 0; i < count; ++i) {
                 std::size_t idLen;
                 if (!a_intfc->ReadRecordData(&idLen, sizeof(idLen))) break;
+                if (idLen == 0 || idLen > 512) break;
 
                 std::string id(idLen, '\0');
                 if (!a_intfc->ReadRecordData(id.data(), idLen)) break;
 
                 CustomSkillState state;
-                state.bonusLevel = 0; // Padrão se for save antigo
+                state.bonusLevel = 0;
 
                 if (!a_intfc->ReadRecordData(&state.currentLevel, sizeof(state.currentLevel))) break;
                 if (!a_intfc->ReadRecordData(&state.currentXP, sizeof(state.currentXP))) break;
 
-                // <--- LÊ O BÔNUS APENAS SE A VERSÃO DO SAVE FOR 2 OU MAIOR
                 if (version >= 2) {
                     if (!a_intfc->ReadRecordData(&state.bonusLevel, sizeof(state.bonusLevel))) break;
                 }
 
                 playerCustomSkills[id] = state;
+                if (std::isfinite(state.currentXP) && state.currentXP > 0.001f) {
+                    actorCustomSkillXP[player_refid][id] = state.currentXP;
+                }
             }
         }
     }
@@ -503,12 +902,12 @@ void Manager::Load(SKSE::SerializationInterface* a_intfc) {
 
 // Limpa a memória quando o jogador vai pro menu principal ou da load em outro save
 void Manager::Revert(SKSE::SerializationInterface* a_intfc) {
+    actorCustomSkillXP.clear();
     playerCustomSkills.clear();
     for (const auto& [id, data] : customSkillsData) {
-        playerCustomSkills[id] = { data.initialLevel, 0.0f, 0 }; // <--- Zera o bônus também
+        playerCustomSkills[id] = { data.initialLevel, 0.0f, 0 };
     }
-}
-// Adicione esta função no final do arquivo ou junto com os outros métodos públicos
+}// Adicione esta função no final do arquivo ou junto com os outros métodos públicos
 
 const InternalFormInfo* Manager::GetInfoByID(const std::string& type, RE::FormID id) {
     // Acesso direto ao map _dataStore

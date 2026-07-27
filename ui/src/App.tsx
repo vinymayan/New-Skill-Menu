@@ -36,6 +36,8 @@ interface CustomResource {
     id: string;
     name: string;
     glob: string;
+    actorValue?: string;
+    isDefault?: boolean;
 }
 
 interface CustomCost {
@@ -1484,9 +1486,10 @@ const SettingsModal = ({ settings, rules, customResources, formLists, onClose, o
 
     const handleBaseChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value, type, checked } = e.target;
+        const parsedValue = value === "" ? "" : Number(value);
         setSettingsData(prev => ({
             ...prev,
-            base: { ...prev.base, [name]: type === 'checkbox' ? checked : Number(value) }
+            base: { ...prev.base, [name]: type === 'checkbox' ? checked : parsedValue } as SettingsData['base']
         }));
     };
 
@@ -1544,8 +1547,8 @@ const SettingsModal = ({ settings, rules, customResources, formLists, onClose, o
                 <div className="settings-tab-content">
                     {activeTab === 'base' && (
                         <div className="settings-grid">
-                            <label>{t('settings.base.perks_per_level')} <input type="number" name="perksPerLevel" value={settingsData.base.perksPerLevel} onChange={handleBaseChange} /></label>
-                            <label>{t('settings.base.skill_cap')} <input type="number" name="skillCap" value={settingsData.base.skillCap || 100} onChange={handleBaseChange} style={{ borderColor: '#ffd700' }} /></label>
+                            <label>{t('settings.base.perks_per_level')} <input type="number" name="perksPerLevel" value={settingsData.base.perksPerLevel ?? ''} onChange={handleBaseChange} /></label>
+                            <label>{t('settings.base.skill_cap')} <input type="number" name="skillCap" value={settingsData.base.skillCap ?? ''} onChange={handleBaseChange} style={{ borderColor: '#ffd700' }} /></label>
                             <label className="checkbox-label" style={{ marginTop: '10px' }}>
                                 <input
                                     type="checkbox"
@@ -1558,7 +1561,7 @@ const SettingsModal = ({ settings, rules, customResources, formLists, onClose, o
 
                             {settingsData.base.useDynamicSkillCap !== false && (
                                 <div className="settings-grid compact-grid" style={{ gridColumn: 'span 2', marginLeft: '10px', paddingLeft: '10px', borderLeft: '2px solid rgba(255,255,255,0.1)', marginTop: '5px', marginBottom: '15px' }}>
-                                    <label>{t('settings.base.cap_level_mult')} <input type="number" step="0.1" name="skillCapPerLevelMult" value={settingsData.base.skillCapPerLevelMult ?? 2.0} onChange={handleBaseChange} /></label>
+                                    <label>{t('settings.base.cap_level_mult')} <input type="number" step="0.1" name="skillCapPerLevelMult" value={settingsData.base.skillCapPerLevelMult ?? ''} onChange={handleBaseChange} /></label>
                                     <label className="checkbox-label" style={{ gridColumn: 'span 2' }}>
                                         <input
                                             type="checkbox"
@@ -1606,11 +1609,11 @@ const SettingsModal = ({ settings, rules, customResources, formLists, onClose, o
                                 />
                                 {t('settings.base.apply_vanilla_initial')}
                             </label>
-                            <label>{t('settings.base.skill_points_per_level')} <input type="number" name="skillPointsPerLevel" value={settingsData.base.skillPointsPerLevel} onChange={handleBaseChange} /></label>
-                            <label>{t('settings.base.max_spendable')} <input type="number" name="maxSkillPointsSpendablePerLevel" value={settingsData.base.maxSkillPointsSpendablePerLevel} onChange={handleBaseChange} /></label>
-                            <label>{t('header.health')} (+): <input type="number" name="healthIncrease" value={settingsData.base.healthIncrease} onChange={handleBaseChange} /></label>
-                            <label>{t('header.magicka')} (+): <input type="number" name="magickaIncrease" value={settingsData.base.magickaIncrease} onChange={handleBaseChange} /></label>
-                            <label>{t('header.stamina')} (+): <input type="number" name="staminaIncrease" value={settingsData.base.staminaIncrease} onChange={handleBaseChange} /></label>
+                            <label>{t('settings.base.skill_points_per_level')} <input type="number" name="skillPointsPerLevel" value={settingsData.base.skillPointsPerLevel ?? ''} onChange={handleBaseChange} /></label>
+                            <label>{t('settings.base.max_spendable')} <input type="number" name="maxSkillPointsSpendablePerLevel" value={settingsData.base.maxSkillPointsSpendablePerLevel ?? ''} onChange={handleBaseChange} /></label>
+                            <label>{t('header.health')} (+): <input type="number" name="healthIncrease" value={settingsData.base.healthIncrease ?? ''} onChange={handleBaseChange} /></label>
+                            <label>{t('header.magicka')} (+): <input type="number" name="magickaIncrease" value={settingsData.base.magickaIncrease ?? ''} onChange={handleBaseChange} /></label>
+                            <label>{t('header.stamina')} (+): <input type="number" name="staminaIncrease" value={settingsData.base.staminaIncrease ?? ''} onChange={handleBaseChange} /></label>
                             <div style={{ gridColumn: 'span 2', marginTop: '15px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '15px' }}>
                                 <h3 style={{ margin: '0 0 10px 0', fontSize: '1.1rem', color: '#4dd0e1' }}>{t('settings.base.carry_weight_title')}</h3>
                                 <div className="settings-grid">
@@ -1627,7 +1630,7 @@ const SettingsModal = ({ settings, rules, customResources, formLists, onClose, o
                                             disableSearch={true}
                                         />
                                     </label>
-                                    <label>{t('settings.base.cw_increase')} <input type="number" name="carryWeightIncrease" value={settingsData.base.carryWeightIncrease || 0} onChange={handleBaseChange} /></label>
+                                    <label>{t('settings.base.cw_increase')} <input type="number" name="carryWeightIncrease" value={settingsData.base.carryWeightIncrease ?? ''} onChange={handleBaseChange} /></label>
 
                                     {settingsData.base.carryWeightMethod === 'linked' && (
                                         <div style={{ gridColumn: 'span 2', display: 'flex', gap: '15px', alignItems: 'center' }}>
@@ -1722,6 +1725,19 @@ const SettingsModal = ({ settings, rules, customResources, formLists, onClose, o
                                             {res.glob ? (formLists['global']?.find(g => g.id === res.glob)?.name || res.glob) : t('settings.resources.select_glob', { defaultValue: 'Selecione uma Variável Global' })}
                                         </button>
                                     </label>
+                                    <label>{t('settings.resources.actor_value', { defaultValue: 'Actor Value' })}
+                                        <input
+                                            type="text"
+                                            value={res.actorValue || ""}
+                                            onChange={e => {
+                                                const r = [...resourcesData];
+                                                r[idx].actorValue = e.target.value;
+                                                if (e.target.value.trim() !== "") r[idx].glob = "";
+                                                setResourcesData(r);
+                                            }}
+                                            placeholder={t('settings.resources.actor_value_placeholder', { defaultValue: 'Ex: Vampirism, Werewolf' })}
+                                        />
+                                    </label>
 
                                     <button className="delete-btn" style={{ gridColumn: 'span 2' }} onClick={() => {
                                         if (window.confirm(t('settings.resources.delete_confirm', { defaultValue: 'Remover este recurso permanentemente?' }))) {
@@ -1731,7 +1747,7 @@ const SettingsModal = ({ settings, rules, customResources, formLists, onClose, o
                                     }}>{t('common.delete')}</button>
                                 </div>
                             ))}
-                            <button className="add-btn" onClick={() => setResourcesData([...resourcesData, { id: `res_${Date.now()}`, name: 'New Resource', glob: '' }])}>{t('settings.resources.add_btn', { defaultValue: 'Adicionar Recurso' })}</button>
+                            <button className="add-btn" onClick={() => setResourcesData([...resourcesData, { id: `res_${Date.now()}`, name: 'New Resource', glob: '', actorValue: '' }])}>{t('settings.resources.add_btn', { defaultValue: 'Adicionar Recurso' })}</button>
                         </div>
                     )}
 
@@ -1767,7 +1783,13 @@ const SettingsModal = ({ settings, rules, customResources, formLists, onClose, o
 
                 <div className="modal-actions" style={{ marginTop: '25px' }}>
                     <button className="modal-btn yes-btn" onClick={() => {
-                        onSaveSettings(settingsData);
+                        const normalizedSettings = {
+                            ...settingsData,
+                            base: Object.fromEntries(
+                                Object.entries(settingsData.base).map(([key, val]) => [key, (val as any) === "" ? 0 : val])
+                            ) as SettingsData['base']
+                        };
+                        onSaveSettings(normalizedSettings);
                         onSaveRules(rulesData);
                         onSaveResources(resourcesData);
                     }}>{t('common.save')}</button>
@@ -1781,6 +1803,7 @@ const SettingsModal = ({ settings, rules, customResources, formLists, onClose, o
                     onSelect={(id) => {
                         const r = [...resourcesData];
                         r[selectingGlobalIdx].glob = id;
+                        r[selectingGlobalIdx].actorValue = "";
                         setResourcesData(r);
                         setSelectingGlobalIdx(null);
                     }}
@@ -2268,6 +2291,9 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
 
                     const displayName = resolveText(currentData.name, isEditorMode);
                     const displayDesc = resolveText(currentData.description, isEditorMode);
+                    const payableCustomCosts = (currentData.customCosts || []).filter(
+                        (cost: CustomCost) => cost.resourceId && (cost.amount ?? 0) >= 1 && customResources?.some(res => res.id === cost.resourceId)
+                    );
 
                     return (
                         <div
@@ -2315,7 +2341,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                                 </div>
                             )}
 
-                            {!currentData.isUnlocked && ((currentData.perkCost ?? 0) > 0 || (currentData.customCosts && currentData.customCosts.length > 0)) && (
+                            {!currentData.isUnlocked && ((currentData.perkCost ?? 0) > 0 || payableCustomCosts.length > 0) && (
                                 <div className="perk-reqs" style={{ marginTop: '5px' }}>
                                     <strong>{t('reqs.costs_label', { defaultValue: 'Costs' })}</strong>
                                     <ul>
@@ -2324,7 +2350,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                                                 {currentData.perkCost}x {t('header.perk_points', { defaultValue: 'Perk Points' })}
                                             </li>
                                         )}
-                                        {currentData.customCosts?.map((cost: CustomCost, i: number) => {
+                                        {payableCustomCosts.map((cost: CustomCost, i: number) => {
                                             const res = customResources?.find((r: CustomResource) => r.id === cost.resourceId);
                                             const resName = res ? resolveText(res.name, false) : cost.resourceId;
                                             const currentAmount = playerData?.resourceValues?.[cost.resourceId] || 0;
@@ -2995,15 +3021,20 @@ const LevelUpModal = ({ trees, settings, rules, currentLevel, pendingLevelUps, o
 
 const ConfirmPerkModal = ({ perkName, cost, customCosts, customResources, onConfirm, onCancel }: { perkName: string, cost: number, customCosts?: CustomCost[], customResources: CustomResource[], onConfirm: () => void, onCancel: () => void }) => {
     const plural = cost > 1 ? 's' : '';
+    const payableCustomCosts = (customCosts || []).filter(c => c.resourceId && (c.amount ?? 0) >= 1 && customResources.some(res => res.id === c.resourceId));
     return (
         <div className="skyrim-modal-overlay">
             <div className="skyrim-modal-content">
                 <h2>{t('unlock_perk.title')}</h2>
                 <div className="tooltip-divider" style={{ width: '100%', marginBottom: '15px' }}></div>
-                <p>{t('unlock_perk.message', { cost, plural, perkName })}</p>
-                {customCosts && customCosts.length > 0 && (
+                <p>
+                    {cost > 0
+                        ? t('unlock_perk.message', { cost, plural, perkName })
+                        : t('unlock_perk.free_message', { perkName, defaultValue: `Unlock ${perkName}?` })}
+                </p>
+                {payableCustomCosts.length > 0 && (
                     <div style={{ marginBottom: '15px' }}>
-                        {customCosts.map(c => {
+                        {payableCustomCosts.map(c => {
                             const res = customResources.find(r => r.id === c.resourceId);
                             return <p key={c.resourceId} style={{ margin: '5px 0', fontSize: '1.1rem', color: '#ffb74d' }}>- {c.amount}x {res ? resolveText(res.name, false) : c.resourceId}</p>
                         })}
@@ -3039,7 +3070,7 @@ const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, custo
 
     const handleChange = (e: any) => {
         const { name, value } = e.target;
-        setFormData(prev => ({ ...prev, [name]: name === 'perkCost' ? Number(value) : value }));
+        setFormData(prev => ({ ...prev, [name]: name === 'perkCost' ? (value === "" ? "" : Number(value)) : value }));
     };
 
     const handleFormSelect = (id: string) => {
@@ -3178,7 +3209,23 @@ const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, custo
     const handleSave = () => {
         if (!formData.id) formData.id = `node_${Date.now()}`;
         if (!formData.perk) return alert(t('perk_editor.alert_select_native'));
-        onSave(formData as PerkNode);
+        const normalizedNode = {
+            ...formData,
+            perkCost: formData.perkCost === ("" as any) ? 0 : Number(formData.perkCost ?? 0),
+            customCosts: (formData.customCosts || []).map(cost => ({
+                ...cost,
+                amount: cost.amount === ("" as any) ? 0 : Number(cost.amount ?? 0)
+            })),
+            nextRanks: (formData.nextRanks || []).map(rank => ({
+                ...rank,
+                perkCost: rank.perkCost === ("" as any) ? 0 : Number(rank.perkCost ?? 0),
+                customCosts: (rank.customCosts || []).map(cost => ({
+                    ...cost,
+                    amount: cost.amount === ("" as any) ? 0 : Number(cost.amount ?? 0)
+                }))
+            }))
+        };
+        onSave(normalizedNode as PerkNode);
     };
 
     return createPortal(
@@ -3232,7 +3279,7 @@ const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, custo
                                         width="200px"
                                         disableSearch={true}
                                     />
-                                    <input type="number" value={cost.amount} onChange={e => updateCustomCost(idx, 'amount', Number(e.target.value))} style={{ width: '80px' }} />
+                                    <input type="number" min={0} value={cost.amount ?? ''} onChange={e => updateCustomCost(idx, 'amount', e.target.value === "" ? "" : Number(e.target.value))} style={{ width: '80px' }} />
                                     <button className="delete-btn" onClick={() => removeCustomCost(idx)}>X</button>
                                 </div>
                             ))}
@@ -3275,7 +3322,7 @@ const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, custo
                                             </button>
                                         </label>
                                         <label>{t('perk_editor.name_ui')} <input type="text" value={rank.name} onChange={e => updateRank(idx, 'name', e.target.value)} /></label>
-                                        <label>{t('perk_editor.cost')} <input type="number" value={rank.perkCost ?? ''} onChange={e => updateRank(idx, 'perkCost', Number(e.target.value))} min={0} /></label>
+                                        <label>{t('perk_editor.cost')} <input type="number" value={rank.perkCost ?? ''} onChange={e => updateRank(idx, 'perkCost', e.target.value === "" ? "" : Number(e.target.value))} min={0} /></label>
                                         <label className="full-width" style={{ gridColumn: 'span 2' }}>{t('perk_editor.description')}
                                             <textarea
                                                 value={rank.description}
@@ -3314,7 +3361,7 @@ const PerkEditorModal = ({ node, availableTrees, formLists, availableReqs, custo
                                                     width="200px"
                                                     disableSearch={true}
                                                 />
-                                                <input type="number" value={cost.amount} onChange={e => updateRankCustomCost(idx, cIdx, 'amount', Number(e.target.value))} style={{ width: '80px' }} />
+                                                <input type="number" min={0} value={cost.amount ?? ''} onChange={e => updateRankCustomCost(idx, cIdx, 'amount', e.target.value === "" ? "" : Number(e.target.value))} style={{ width: '80px' }} />
                                                 <button className="delete-btn" onClick={() => removeRankCustomCost(idx, cIdx)}>X</button>
                                             </div>
                                         ))}
@@ -3826,11 +3873,12 @@ function App() {
     const handleUnlockPerkConfirm = useCallback(() => {
         if (confirmingPerk && typeof (window as any).unlockPerk === 'function') {
             const cost = confirmingPerk.perkCost ?? 0;
+            const customCosts = (confirmingPerk.customCosts || []).filter(c => c.resourceId && (c.amount ?? 0) >= 1 && customResources.some(res => res.id === c.resourceId));
             playSound('UISkillsPerkSelect2D');
-            (window as any).unlockPerk(JSON.stringify({ id: confirmingPerk.perk, cost }));
+            (window as any).unlockPerk(JSON.stringify({ id: confirmingPerk.perk, cost, customCosts }));
         }
         setConfirmingPerk(null);
-    }, [confirmingPerk]);
+    }, [confirmingPerk, customResources]);
 
     const handleNodeClick = useCallback((node: PerkNode) => {
         if (isEditorMode) return;
@@ -3859,6 +3907,8 @@ function App() {
 
             if (canAfford && targetNodeData.customCosts) {
                 for (const cost of targetNodeData.customCosts) {
+                    if (!cost.resourceId || (cost.amount ?? 0) < 1) continue;
+                    if (!customResources.some(res => res.id === cost.resourceId)) continue;
                     const currentAmt = playerData.resourceValues?.[cost.resourceId] || 0;
                     if (currentAmt < cost.amount) {
                         canAfford = false;
@@ -3877,7 +3927,7 @@ function App() {
                 });
             }
         }
-    }, [isEditorMode, playerData]);
+    }, [isEditorMode, playerData, customResources]);
 
     const handleSaveTrees = useCallback(() => {
         if (typeof (window as any).saveSkillTrees === 'function') {
@@ -4190,7 +4240,7 @@ function App() {
             {shouldShowLevelUp && (
                 <LevelUpModal
                     key={playerData!.level}
-                    trees={skillTrees}
+                    trees={skillTrees.filter(tree => !tree.isHidden)}
                     rules={rules}
                     settings={settings}
                     currentLevel={playerData!.level || 1}

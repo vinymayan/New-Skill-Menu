@@ -78,6 +78,8 @@
       "unique_id": "ID Único:",
       "display_name": "Nome de Exibição:",
       "glob_id": "Glob ID:",
+      "actor_value": "Actor Value:",
+      "actor_value_placeholder": "Ex: Vampirism, Werewolf",
       "select_glob": "Selecione uma Variável Global",
       "delete_confirm": "Remover permanentemente este recurso?",
       "add_btn": "+ ADICIONAR RECURSO"
@@ -214,6 +216,7 @@
   "unlock_perk": {
     "title": "DESBLOQUEAR PERK",
     "message": "Você deseja gastar {cost} ponto{plural} de perk para desbloquear {perkName}?",
+    "free_message": "Desbloquear {perkName}?",
     "cost_tag": "Custo: {cost} Ponto(s)",
     "acquired": "ADQUIRIDO",
     "insufficient_points": "Você não possui pontos de habilidade suficientes para desbloquear este Perk."

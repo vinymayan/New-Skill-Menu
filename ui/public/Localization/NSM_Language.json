@@ -78,6 +78,8 @@
       "unique_id": "Unique ID:",
       "display_name": "Display Name:",
       "glob_id": "Glob ID:",
+      "actor_value": "Actor Value:",
+      "actor_value_placeholder": "Ex: Vampirism, Werewolf",
       "select_glob": "Select a Global Variable",
       "delete_confirm": "Permanently remove this resource?",
       "add_btn": "+ ADD RESOURCE"
@@ -214,6 +216,7 @@
   "unlock_perk": {
     "title": "UNLOCK PERK",
     "message": "Do you want to spend {cost} perk point{plural} to unlock {perkName}?",
+    "free_message": "Unlock {perkName}?",
     "cost_tag": "Cost: {cost} Point(s)",
     "acquired": "ACQUIRED",
     "insufficient_points": "You do not have enough skill points to unlock this Perk."

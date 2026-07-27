@@ -1,9 +1,10 @@
 #pragma once
 #include <stdint.h>
+#include "RE/T/TESForm.h"
 
 namespace SkillMenuAPI {
     constexpr const auto Name = "SkillMenuAPI";
-    constexpr const uint32_t Version = 2;
+    constexpr const uint32_t Version = 3;
 
     // A estrutura de interface que seu mod vai expor
     struct Interface {
@@ -33,5 +34,17 @@ namespace SkillMenuAPI {
 
         // Define o Bônus para um valor exato
         void (*SetCustomSkillBonus)(const char* skillId, int amount);
+
+        // ================= V3 API =================
+        void (*AddCustomSkillXPForActor)(RE::FormID actorFormID, const char* skillId, float xpAmount);
+        int (*GetCustomSkillLevelForActor)(RE::FormID actorFormID, const char* skillId);
+        float (*GetCustomSkillXPForActor)(RE::FormID actorFormID, const char* skillId);
+        int (*GetCustomSkillTotalLevelForActor)(RE::FormID actorFormID, const char* skillId);
+        int (*GetCustomSkillBonusForActor)(RE::FormID actorFormID, const char* skillId);
+        void (*ModCustomSkillBonusForActor)(RE::FormID actorFormID, const char* skillId, int amount);
+        void (*SetCustomSkillBonusForActor)(RE::FormID actorFormID, const char* skillId, int amount);
+        bool (*HasCustomPerkForActor)(RE::FormID actorFormID, const char* perkId);
+        bool (*AddCustomPerkForActor)(RE::FormID actorFormID, const char* perkId);
+        bool (*RemoveCustomPerkForActor)(RE::FormID actorFormID, const char* perkId);
     };
 }
