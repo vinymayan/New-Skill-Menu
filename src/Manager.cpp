@@ -579,6 +579,103 @@ bool Manager::RemoveCustomPerk(RE::Actor* actor, const std::string& perkId) {
     return true;
 }
 
+RE::Actor* Manager::ResolveActor(RE::FormID actorFormID) const {
+    return ResolveActorFromFormID(actorFormID);
+}
+
+ActorProgressState& Manager::EnsureActorProgress(RE::Actor* actor) {
+    static ActorProgressState invalidState;
+    if (!actor) return invalidState;
+
+    const auto actorId = actor->GetFormID();
+    auto [it, inserted] = actorProgressStates.try_emplace(actorId);
+    auto& state = it->second;
+    const int observedLevel = std::max(1, static_cast<int>(actor->GetLevel()));
+
+    if (inserted || state.lastObservedLevel <= 0) {
+        state.lastObservedLevel = observedLevel;
+        state.highestRewardedLevel = observedLevel;
+    }
+    else if (!actor->IsPlayerRef() && observedLevel > state.lastObservedLevel) {
+        state.pendingLevelUps += observedLevel - state.lastObservedLevel;
+        state.lastObservedLevel = observedLevel;
+    }
+
+    return state;
+}
+
+int Manager::GetActorPerkPoints(RE::Actor* actor) {
+    if (!actor) return 0;
+    if (actor->IsPlayerRef()) {
+        auto player = RE::PlayerCharacter::GetSingleton();
+        return player ? static_cast<int>(player->GetPlayerRuntimeData().perkCount) : 0;
+    }
+    return std::max(0, EnsureActorProgress(actor).perkPoints);
+}
+
+bool Manager::SpendActorPerkPoints(RE::Actor* actor, int amount) {
+    if (!actor || amount < 0) return false;
+    if (GetActorPerkPoints(actor) < amount) return false;
+    ModActorPerkPoints(actor, -amount);
+    return true;
+}
+
+void Manager::ModActorPerkPoints(RE::Actor* actor, int amount) {
+    if (!actor || amount == 0) return;
+    if (actor->IsPlayerRef()) {
+        auto player = RE::PlayerCharacter::GetSingleton();
+        if (!player) return;
+        int current = static_cast<int>(player->GetPlayerRuntimeData().perkCount);
+        player->GetPlayerRuntimeData().perkCount =
+            static_cast<std::uint8_t>(std::clamp(current + amount, 0, 255));
+        return;
+    }
+
+    auto& state = EnsureActorProgress(actor);
+    state.perkPoints = std::clamp(state.perkPoints + amount, 0, 1000000);
+}
+
+int Manager::GetPendingLevelUps(RE::Actor* actor) {
+    return actor ? std::max(0, EnsureActorProgress(actor).pendingLevelUps) : 0;
+}
+
+void Manager::QueuePendingLevelUps(RE::Actor* actor, int amount) {
+    if (!actor || amount <= 0) return;
+    auto& state = EnsureActorProgress(actor);
+    state.pendingLevelUps = std::clamp(state.pendingLevelUps + amount, 0, 10000);
+    state.lastObservedLevel = std::max(state.lastObservedLevel, static_cast<int>(actor->GetLevel()));
+}
+
+void Manager::ConsumePendingLevelUps(RE::Actor* actor, int amount) {
+    if (!actor || amount <= 0) return;
+    auto& state = EnsureActorProgress(actor);
+    const int consumed = std::min(amount, state.pendingLevelUps);
+    state.pendingLevelUps -= consumed;
+    state.highestRewardedLevel += consumed;
+}
+
+void Manager::RecordPurchasedPerk(RE::Actor* actor, RE::FormID perkFormID, int perkPointCost) {
+    if (!actor || perkFormID == 0) return;
+    EnsureActorProgress(actor).purchasedPerks[perkFormID] = std::max(0, perkPointCost);
+}
+
+std::optional<int> Manager::RemovePurchasedPerkRecord(RE::Actor* actor, RE::FormID perkFormID) {
+    if (!actor || perkFormID == 0) return std::nullopt;
+    auto actorIt = actorProgressStates.find(actor->GetFormID());
+    if (actorIt == actorProgressStates.end()) return std::nullopt;
+    auto perkIt = actorIt->second.purchasedPerks.find(perkFormID);
+    if (perkIt == actorIt->second.purchasedPerks.end()) return std::nullopt;
+    int paid = perkIt->second;
+    actorIt->second.purchasedPerks.erase(perkIt);
+    return paid;
+}
+
+bool Manager::WasPerkPurchasedForActor(RE::Actor* actor, RE::FormID perkFormID) const {
+    if (!actor || perkFormID == 0) return false;
+    auto actorIt = actorProgressStates.find(actor->GetFormID());
+    return actorIt != actorProgressStates.end() && actorIt->second.purchasedPerks.contains(perkFormID);
+}
+
 void Manager::RemoveCustomSkillState(const std::string& skillId) {
     customSkillsData.erase(skillId);
     playerCustomSkills.erase(skillId);
@@ -821,6 +918,25 @@ void Manager::Save(SKSE::SerializationInterface* a_intfc) {
             a_intfc->WriteRecordData(&xp, sizeof(xp));
         }
     }
+
+    if (!a_intfc->OpenRecord('APRG', 1)) return;
+    const auto progressCount = static_cast<std::uint32_t>(actorProgressStates.size());
+    a_intfc->WriteRecordData(&progressCount, sizeof(progressCount));
+
+    for (const auto& [actorId, state] : actorProgressStates) {
+        a_intfc->WriteRecordData(&actorId, sizeof(actorId));
+        a_intfc->WriteRecordData(&state.perkPoints, sizeof(state.perkPoints));
+        a_intfc->WriteRecordData(&state.lastObservedLevel, sizeof(state.lastObservedLevel));
+        a_intfc->WriteRecordData(&state.highestRewardedLevel, sizeof(state.highestRewardedLevel));
+        a_intfc->WriteRecordData(&state.pendingLevelUps, sizeof(state.pendingLevelUps));
+
+        const auto perkCount = static_cast<std::uint32_t>(state.purchasedPerks.size());
+        a_intfc->WriteRecordData(&perkCount, sizeof(perkCount));
+        for (const auto& [perkId, paidCost] : state.purchasedPerks) {
+            a_intfc->WriteRecordData(&perkId, sizeof(perkId));
+            a_intfc->WriteRecordData(&paidCost, sizeof(paidCost));
+        }
+    }
 }
 
 void Manager::Load(SKSE::SerializationInterface* a_intfc) {
@@ -830,8 +946,56 @@ void Manager::Load(SKSE::SerializationInterface* a_intfc) {
 
     actorCustomSkillXP.clear();
     playerCustomSkills.clear();
+    actorProgressStates.clear();
 
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
+        if (type == 'APRG') {
+            std::uint32_t actorCount = 0;
+            if (!a_intfc->ReadRecordData(&actorCount, sizeof(actorCount))) continue;
+            if (actorCount > 10000) continue;
+
+            for (std::uint32_t i = 0; i < actorCount; ++i) {
+                RE::FormID oldActorId = 0;
+                ActorProgressState state;
+                if (!a_intfc->ReadRecordData(&oldActorId, sizeof(oldActorId))) break;
+                if (!a_intfc->ReadRecordData(&state.perkPoints, sizeof(state.perkPoints))) break;
+                if (!a_intfc->ReadRecordData(&state.lastObservedLevel, sizeof(state.lastObservedLevel))) break;
+                if (!a_intfc->ReadRecordData(&state.highestRewardedLevel, sizeof(state.highestRewardedLevel))) break;
+                if (!a_intfc->ReadRecordData(&state.pendingLevelUps, sizeof(state.pendingLevelUps))) break;
+
+                RE::FormID actorId = 0;
+                bool actorResolved = a_intfc->ResolveFormID(oldActorId, actorId);
+                if (!actorResolved && oldActorId == player_refid) {
+                    actorId = player_refid;
+                    actorResolved = true;
+                }
+
+                std::uint32_t perkCount = 0;
+                if (!a_intfc->ReadRecordData(&perkCount, sizeof(perkCount))) break;
+                if (perkCount > 100000) break;
+                for (std::uint32_t j = 0; j < perkCount; ++j) {
+                    RE::FormID oldPerkId = 0;
+                    int paidCost = 0;
+                    if (!a_intfc->ReadRecordData(&oldPerkId, sizeof(oldPerkId))) break;
+                    if (!a_intfc->ReadRecordData(&paidCost, sizeof(paidCost))) break;
+
+                    RE::FormID perkId = 0;
+                    if (actorResolved && a_intfc->ResolveFormID(oldPerkId, perkId)) {
+                        state.purchasedPerks[perkId] = std::max(0, paidCost);
+                    }
+                }
+
+                if (actorResolved) {
+                    state.perkPoints = std::clamp(state.perkPoints, 0, 1000000);
+                    state.pendingLevelUps = std::clamp(state.pendingLevelUps, 0, 10000);
+                    state.lastObservedLevel = std::clamp(state.lastObservedLevel, 0, 10000);
+                    state.highestRewardedLevel = std::clamp(state.highestRewardedLevel, 0, 10000);
+                    actorProgressStates[actorId] = std::move(state);
+                }
+            }
+            continue;
+        }
+
         if (type != 'SKIL') continue;
 
         if (version >= 3) {
@@ -903,6 +1067,7 @@ void Manager::Load(SKSE::SerializationInterface* a_intfc) {
 // Limpa a memória quando o jogador vai pro menu principal ou da load em outro save
 void Manager::Revert(SKSE::SerializationInterface* a_intfc) {
     actorCustomSkillXP.clear();
+    actorProgressStates.clear();
     playerCustomSkills.clear();
     for (const auto& [id, data] : customSkillsData) {
         playerCustomSkills[id] = { data.initialLevel, 0.0f, 0 };

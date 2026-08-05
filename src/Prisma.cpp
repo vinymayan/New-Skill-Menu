@@ -10,7 +10,325 @@ static bool isVisible = false;
 static json g_mergedLocCache;
 static bool g_locLoaded = false;
 static bool g_isLevelUpMenuOpen = false;
-static int g_pendingLevelUps = 0;
+static RE::FormID g_selectedActorID = player_refid;
+
+static std::string ActorRuntimeKey(RE::Actor* actor) {
+    return actor ? fmt::format("{:08X}", actor->GetFormID()) : "";
+}
+
+static std::string ActorRuleKey(RE::Actor* actor) {
+    if (!actor) return "";
+    if (actor->IsPlayerRef()) return "player";
+
+    auto file = actor->GetFile(0);
+    if (file) {
+        const auto formID = actor->GetFormID();
+        const std::uint32_t localID = (formID & 0xFF000000) == 0xFE000000 ?
+            (formID & 0xFFF) : (formID & 0xFFFFFF);
+        return fmt::format("{}|{:X}", file->GetFilename(), localID);
+    }
+
+    auto base = actor->GetActorBase();
+    if (base) {
+        file = base->GetFile(0);
+        if (file) {
+            const auto formID = base->GetFormID();
+            const std::uint32_t localID = (formID & 0xFF000000) == 0xFE000000 ?
+                (formID & 0xFFF) : (formID & 0xFFFFFF);
+            return fmt::format("{}|{:X}", file->GetFilename(), localID);
+        }
+    }
+    return ActorRuntimeKey(actor);
+}
+
+static bool ActorOwnsPerk(RE::Actor* actor, RE::BGSPerk* perk) {
+    if (!actor || !perk) {
+        return false;
+    }
+
+    const bool runtimeHasPerk = actor->HasPerk(perk);
+
+    auto actorBase = actor->GetActorBase();
+    const bool actorBaseHasPerk =
+        actorBase && actorBase->GetPerkIndex(perk).has_value();
+
+    auto templateBase = actor->GetTemplateBase();
+    const bool templateBaseHasPerk =
+        templateBase &&
+        templateBase != actorBase &&
+        templateBase->GetPerkIndex(perk).has_value();
+
+    const bool purchasedThroughMenu =
+        Manager::GetSingleton()->WasPerkPurchasedForActor(
+            actor,
+            perk->GetFormID());
+
+    const bool ownsPerk =
+        runtimeHasPerk ||
+        actorBaseHasPerk ||
+        templateBaseHasPerk ||
+        purchasedThroughMenu;
+
+    if (!actor->IsPlayerRef() && ownsPerk) {
+        const auto diagnosticKey =
+            (static_cast<std::uint64_t>(actor->GetFormID()) << 32) |
+            perk->GetFormID();
+        static std::unordered_set<std::uint64_t> loggedOwnedPerks;
+        if (loggedOwnedPerks.insert(diagnosticKey).second) {
+            logger::info(
+                "[ActorPerks] actor='{}' actorID={:08X} perk='{}' perkID={:08X} "
+                "runtime={} actorBase={} templateBase={} purchasedLedger={}",
+                actor->GetName(),
+                actor->GetFormID(),
+                perk->GetName(),
+                perk->GetFormID(),
+                runtimeHasPerk,
+                actorBaseHasPerk,
+                templateBaseHasPerk,
+                purchasedThroughMenu);
+        }
+    }
+
+    return ownsPerk;
+}
+
+static bool IsLydiaActor(RE::Actor* actor) {
+    if (!actor) {
+        return false;
+    }
+
+    const auto actorBase = actor->GetActorBase();
+    const auto actorName = actor->GetName();
+    return actor->GetFormID() == 0x000A2C94 ||
+        (actorBase && actorBase->GetFormID() == 0x000A2C8E) ||
+        (actorName && _stricmp(actorName, "Lydia") == 0);
+}
+
+static bool IsActivePlayerCompanion(RE::Actor* actor, bool isHighProcess) {
+    if (!actor) {
+        return false;
+    }
+
+    // Vanilla follower identity:
+    // - CurrentFollowerFaction   = 0001CA7D
+    // - PotentialFollowerFaction = 0005C84D
+    //
+    // highActorHandles already establishes that the actor is currently active.
+    // CurrentFollowerFaction is therefore the strongest vanilla signal.
+    static auto currentFollowerFaction = []() -> RE::TESFaction* {
+        auto dataHandler = RE::TESDataHandler::GetSingleton();
+        return dataHandler ?
+            dataHandler->LookupForm<RE::TESFaction>(0x0001CA7D, "Skyrim.esm") :
+            nullptr;
+    }();
+    static auto potentialFollowerFaction = []() -> RE::TESFaction* {
+        auto dataHandler = RE::TESDataHandler::GetSingleton();
+        return dataHandler ?
+            dataHandler->LookupForm<RE::TESFaction>(0x0005C84D, "Skyrim.esm") :
+            nullptr;
+    }();
+    static auto actorTypeNPC = []() -> RE::BGSKeyword* {
+        auto dataHandler = RE::TESDataHandler::GetSingleton();
+        return dataHandler ?
+            dataHandler->LookupForm<RE::BGSKeyword>(0x00013794, "Skyrim.esm") :
+            nullptr;
+    }();
+
+    auto race = actor->GetRace();
+    const auto lifeState = actor->GetLifeState();
+    const bool isActuallyDead =
+        lifeState == RE::ACTOR_LIFE_STATE::kDying ||
+        lifeState == RE::ACTOR_LIFE_STATE::kDead;
+    const bool isDeadDefault = actor->IsDead();
+    const bool isDeadIncludingEssential = actor->IsDead(false);
+    const bool isBleedingOut = actor->IsBleedingOut();
+    const bool isEssential = actor->IsEssential();
+    const float health =
+        actor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kHealth);
+    const bool isDisabled = actor->IsDisabled();
+    const bool isSummoned = actor->IsSummoned();
+    const bool isSummonedByPlayer = actor->IsSummonedByPlayer();
+    const bool isPlayerTeammate = actor->IsPlayerTeammate();
+    const bool isCurrentFollower =
+        currentFollowerFaction && actor->IsInFaction(currentFollowerFaction);
+    const bool isPotentialFollower =
+        potentialFollowerFaction && actor->IsInFaction(potentialFollowerFaction);
+    const bool isHumanoidNPC =
+        race && actorTypeNPC && race->HasKeyword(actorTypeNPC);
+    const bool isCommandedActor = actor->IsCommandedActor();
+
+    auto commandingActor = actor->GetCommandingActor();
+    const auto commandingActorID =
+        commandingActor ? commandingActor->GetFormID() : RE::FormID{ 0 };
+    const bool isCommandedByPlayer =
+        commandingActor && commandingActor->IsPlayerRef();
+
+    bool accepted = false;
+    std::string_view reason = "not_player_teammate";
+
+    if (!isHighProcess) {
+        reason = "not_in_high_process";
+    }
+    else if (isActuallyDead) {
+        reason = "dead_life_state";
+    }
+    else if (isDisabled) {
+        reason = "disabled";
+    }
+    else if (isSummoned) {
+        reason = "summoned";
+    }
+    else if (isCurrentFollower) {
+        accepted = true;
+        reason = "current_follower_faction";
+    }
+    else if (isPlayerTeammate && isPotentialFollower) {
+        accepted = true;
+        reason = "teammate_and_potential_follower";
+    }
+    else if (isPlayerTeammate && isHumanoidNPC) {
+        accepted = true;
+        reason = "humanoid_teammate_framework_fallback";
+    }
+    else if (isPlayerTeammate) {
+        reason = "teammate_but_not_recognized_follower";
+    }
+
+    const auto actorBase = actor->GetActorBase();
+    const auto actorBaseID = actorBase ? actorBase->GetFormID() : RE::FormID{ 0 };
+    const auto actorName = actor->GetName();
+    const auto raceName = race ? race->GetName() : "";
+    const auto raceID = race ? race->GetFormID() : RE::FormID{ 0 };
+    const auto processLevel = static_cast<std::uint32_t>(actor->GetProcessLevel());
+    const auto diagnosticState = fmt::format(
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        isHighProcess,
+        static_cast<std::uint32_t>(lifeState),
+        isActuallyDead,
+        isDeadDefault,
+        isDeadIncludingEssential,
+        isBleedingOut,
+        isEssential,
+        isDisabled,
+        isSummoned,
+        isSummonedByPlayer,
+        isPlayerTeammate,
+        isCurrentFollower,
+        isPotentialFollower,
+        isHumanoidNPC,
+        isCommandedActor,
+        isCommandedByPlayer,
+        commandingActorID,
+        processLevel,
+        accepted,
+        reason);
+
+    // This function can be called several times during a single UI refresh.
+    // Log each actor only when one of the diagnostic fields changes.
+    static std::unordered_map<RE::FormID, std::string> lastDiagnosticState;
+    auto& previousState = lastDiagnosticState[actor->GetFormID()];
+    if (previousState != diagnosticState) {
+        previousState = diagnosticState;
+        logger::info(
+            "[CompanionFilter]{} name='{}' actor={:08X} base={:08X} "
+            "race='{}' raceID={:08X} highProcess={} processLevel={} "
+            "playerTeammate={} currentFollower={} potentialFollower={} humanoidNPC={} "
+            "commandedActor={} commandedByPlayer={} commandingActor={:08X} "
+            "summoned={} summonedByPlayer={} lifeState={} actuallyDead={} "
+            "isDeadDefault={} isDeadFalse={} bleedingOut={} essential={} health={} "
+            "disabled={} accepted={} reason={}",
+            IsLydiaActor(actor) ? "[LYDIA]" : "",
+            actorName ? actorName : "",
+            actor->GetFormID(),
+            actorBaseID,
+            raceName ? raceName : "",
+            raceID,
+            isHighProcess,
+            processLevel,
+            isPlayerTeammate,
+            isCurrentFollower,
+            isPotentialFollower,
+            isHumanoidNPC,
+            isCommandedActor,
+            isCommandedByPlayer,
+            commandingActorID,
+            isSummoned,
+            isSummonedByPlayer,
+            static_cast<std::uint32_t>(lifeState),
+            isActuallyDead,
+            isDeadDefault,
+            isDeadIncludingEssential,
+            isBleedingOut,
+            isEssential,
+            health,
+            isDisabled,
+            accepted,
+            reason);
+    }
+
+    return accepted;
+}
+
+static std::vector<RE::Actor*> GetSelectableActors() {
+    std::vector<RE::Actor*> actors;
+    std::unordered_set<RE::FormID> seen;
+
+    auto player = RE::PlayerCharacter::GetSingleton();
+    if (player) {
+        actors.push_back(player);
+        seen.insert(player->GetFormID());
+    }
+
+    auto processLists = RE::ProcessLists::GetSingleton();
+    if (processLists) {
+        bool foundLydiaInHighProcess = false;
+
+        // Iterate the native high-process handle array directly. It is the same
+        // source used for active actors by the game's combat/event systems.
+        for (auto& actorHandle : processLists->highActorHandles) {
+            auto actorPtr = actorHandle.get();
+            auto actor = actorPtr.get();
+            if (!actor || actor->IsPlayerRef()) {
+                continue;
+            }
+
+            foundLydiaInHighProcess |= IsLydiaActor(actor);
+            if (IsActivePlayerCompanion(actor, true) && seen.insert(actor->GetFormID()).second) {
+                actors.push_back(actor);
+            }
+        }
+
+        // If Lydia is loaded but not present in highActorHandles, log the same
+        // fields with highProcess=false so the rejection source is explicit.
+        if (!foundLydiaInHighProcess) {
+            if (auto lydia = RE::TESForm::LookupByID<RE::Actor>(0x000A2C94)) {
+                IsActivePlayerCompanion(lydia, false);
+            }
+            else {
+                static bool loggedMissingLydiaReference = false;
+                if (!loggedMissingLydiaReference) {
+                    loggedMissingLydiaReference = true;
+                    logger::info(
+                        "[CompanionFilter][LYDIA] reference 000A2C94 not resolved "
+                        "and Lydia was not found in highActorHandles");
+                }
+            }
+        }
+    }
+
+    return actors;
+}
+
+static RE::Actor* GetSelectedActor() {
+    for (auto actor : GetSelectableActors()) {
+        if (actor && actor->GetFormID() == g_selectedActorID) {
+            return actor;
+        }
+    }
+
+    g_selectedActorID = player_refid;
+    return RE::PlayerCharacter::GetSingleton();
+}
 
 struct CachedTreeData {
     json data;
@@ -120,7 +438,7 @@ void Prisma::SendKeyPress(const std::string& key) {
 }
 
 json GetCustomResources() {
-    // 1. Verifica se j· est· no cache
+    // 1. Verifica se j√° est√° no cache
     if (g_resourcesLoaded) {
         return g_resourcesCache;
     }
@@ -178,7 +496,7 @@ static void SaveResourcesFromUI(const char* jsonArgs) {
             }
         }
 
-        // Invalida o cache para forÁar a releitura no prÛximo GetCustomResources
+        // Invalida o cache para for√ßar a releitura no pr√≥ximo GetCustomResources
         g_resourcesLoaded = false;
     }
     catch (const std::exception& e) {
@@ -205,7 +523,7 @@ static void DeleteResourceFromUI(const char* args) {
                 }
             }
 
-            // Invalida o cache apÛs deletar com sucesso
+            // Invalida o cache ap√≥s deletar com sucesso
             g_resourcesLoaded = false;
         }
     }
@@ -226,18 +544,18 @@ static void PlayUISound(const char* soundEditorID) {
 }
 
 bool IsLocationDiscovered(RE::BGSLocation* a_location) {
-    // 1. Verifica se a localizaÁ„o existe
+    // 1. Verifica se a localiza√ß√£o existe
     if (!a_location) {
         return false;
     }
 
-    // 2. Pega o Handle do marcador de mapa (MNAM) da localizaÁ„o
+    // 2. Pega o Handle do marcador de mapa (MNAM) da localiza√ß√£o
     RE::ObjectRefHandle markerHandle = a_location->worldLocMarker;
     if (!markerHandle) {
-        return false; // Essa location n„o tem um Ìcone no mapa global
+        return false; // Essa location n√£o tem um √≠cone no mapa global
     }
 
-    // 3. Resolve o Handle para pegar a referÍncia (TESObjectREFR) no mundo
+    // 3. Resolve o Handle para pegar a refer√™ncia (TESObjectREFR) no mundo
     RE::NiPointer<RE::TESObjectREFR> markerRef = markerHandle.get();
     if (!markerRef) {
         return false;
@@ -246,7 +564,7 @@ bool IsLocationDiscovered(RE::BGSLocation* a_location) {
     // 4. Busca o ExtraMapMarker dentro do objeto
     auto extraMapMarker = markerRef->extraList.GetByType<RE::ExtraMapMarker>();
     if (extraMapMarker && extraMapMarker->mapData) {
-        // 5. Checa se a flag kCanTravelTo est· ativa (Õcone branco / Fast Travel habilitado)
+        // 5. Checa se a flag kCanTravelTo est√° ativa (√çcone branco / Fast Travel habilitado)
         return extraMapMarker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo);
     }
 
@@ -267,7 +585,7 @@ std::string SanitizeFilename(std::string name) {
     return name;
 }
 
-// Helper para converter caminhos da UI (./Assets/img.png) para caminhos fÌsicos e caminhos dentro do ZIP
+// Helper para converter caminhos da UI (./Assets/img.png) para caminhos f√≠sicos e caminhos dentro do ZIP
 struct PathInfo {
     std::string fullSystemPath; // C:\Skyrim\Data\PrismaUI\views\Product\Assets\img.png
     std::string zipInternalPath; // Data/PrismaUI/views/Product/Assets/img.png
@@ -289,7 +607,7 @@ PathInfo ResolvePathForExport(const std::string& uiPath) {
     PathInfo info;
     info.fullSystemPath = productPath + cleanPath;
 
-    // Para ficar instal·vel, o ZIP deve comeÁar com Data/...
+    // Para ficar instal√°vel, o ZIP deve come√ßar com Data/...
     info.zipInternalPath = productPath + cleanPath;
 
     // Normaliza separadores para o ZIP (sempre /)
@@ -309,7 +627,7 @@ static void ExportTreeFromUI(const char* jsonArgs) {
         std::string treeName = treeData.value("name", "Unknown");
         std::string safeName = SanitizeFilename(treeName);
 
-        // 1. Preparar diretÛrio de exportaÁ„o
+        // 1. Preparar diret√≥rio de exporta√ß√£o
         std::filesystem::path exportDir = "Data/PrismaUI/Exports";
         std::filesystem::create_directories(exportDir);
         std::string zipPath = (exportDir / (safeName + ".zip")).string();
@@ -325,19 +643,19 @@ static void ExportTreeFromUI(const char* jsonArgs) {
             return;
         }
 
-        // 3. Adicionar o arquivo JSON da ¡rvore
-        // Caminho fÌsico atual
+        // 3. Adicionar o arquivo JSON da √Årvore
+        // Caminho f√≠sico atual
         std::string jsonSystemPath = "Data/PrismaUI/views/" PRODUCT_NAME "/Skill Trees/" + treeName + ".json";
         // Caminho dentro do ZIP
         std::string jsonZipPath = "Data/PrismaUI/views/" PRODUCT_NAME "/Skill Trees/" + treeName + ".json";
 
-        // Se o arquivo ainda n„o foi salvo no disco pelo usu·rio, salvamos temporariamente o conte˙do do payload
-        // Mas o ideal È ler do disco para garantir consistÍncia. Vamos assumir que o usu·rio salvou antes.
+        // Se o arquivo ainda n√£o foi salvo no disco pelo usu√°rio, salvamos temporariamente o conte√∫do do payload
+        // Mas o ideal √© ler do disco para garantir consist√™ncia. Vamos assumir que o usu√°rio salvou antes.
         if (std::filesystem::exists(jsonSystemPath)) {
             mz_zip_writer_add_file(&zip_archive, jsonZipPath.c_str(), jsonSystemPath.c_str(), nullptr, 0, MZ_BEST_COMPRESSION);
         }
         else {
-            // Se n„o existir (novo), grava o conte˙do da string JSON direta no ZIP
+            // Se n√£o existir (novo), grava o conte√∫do da string JSON direta no ZIP
             std::string dump = treeData.dump(4);
             mz_zip_writer_add_mem(&zip_archive, jsonZipPath.c_str(), dump.data(), dump.size(), MZ_BEST_COMPRESSION);
         }
@@ -345,21 +663,21 @@ static void ExportTreeFromUI(const char* jsonArgs) {
         // 4. Identificar e Adicionar Assets (Imagens)
         std::vector<std::string> assetsToProcess;
 
-        // Background da ¡rvore
+        // Background da √Årvore
         if (treeData.contains("bgPath")) assetsToProcess.push_back(treeData["bgPath"]);
-        // Õcone da ¡rvore
+        // √çcone da √Årvore
         if (treeData.contains("iconPath")) assetsToProcess.push_back(treeData["iconPath"]);
-        // Õcone GenÈrico de Perk
+        // √çcone Gen√©rico de Perk
         if (treeData.contains("iconPerkPath")) assetsToProcess.push_back(treeData["iconPerkPath"]);
 
-        // Õcones dos Nodes (Perks)
+        // √çcones dos Nodes (Perks)
         if (treeData.contains("nodes") && treeData["nodes"].is_array()) {
             for (const auto& node : treeData["nodes"]) {
                 if (node.contains("icon")) assetsToProcess.push_back(node["icon"]);
             }
         }
 
-        // Processa assets ˙nicos (evitar duplicatas no ZIP)
+        // Processa assets √∫nicos (evitar duplicatas no ZIP)
         std::sort(assetsToProcess.begin(), assetsToProcess.end());
         assetsToProcess.erase(std::unique(assetsToProcess.begin(), assetsToProcess.end()), assetsToProcess.end());
 
@@ -396,7 +714,7 @@ std::vector<std::string> GetAvailableLanguages() {
 
 
 json GetLocalizationContent() {
-    // 1. Verifica se j· est· na memÛria (Cache Hit)
+    // 1. Verifica se j√° est√° na mem√≥ria (Cache Hit)
     if (g_locLoaded) {
         return g_mergedLocCache;
     }
@@ -411,7 +729,7 @@ json GetLocalizationContent() {
                 if (file.is_open()) {
                     try {
                         json content = json::parse(file);
-                        // Deep merge (mescla todos os arquivos em um ˙nico dicion·rio)
+                        // Deep merge (mescla todos os arquivos em um √∫nico dicion√°rio)
                         merged.merge_patch(content);
                     }
                     catch (const std::exception& e) {
@@ -433,10 +751,10 @@ json GetLocalizationContent() {
 
 
 static void RequestLocalizationFromUI(const char* args) {
-    // 1. LÍ o JSON mesclado do disco/cache
+    // 1. L√™ o JSON mesclado do disco/cache
     json content = GetLocalizationContent();
 
-    // 2. Monta a resposta ignorando o args (agora È unificado)
+    // 2. Monta a resposta ignorando o args (agora √© unificado)
     json response;
     response["lang"] = "NSM_Language";
     response["data"] = content;
@@ -449,7 +767,7 @@ static void RequestLocalizationFromUI(const char* args) {
 }
 
 void Prisma::PreloadLocalization() {
-    logger::info("PrÈ-carregando dados de localizaÁ„o unificados...");
+    logger::info("Pr√©-carregando dados de localiza√ß√£o unificados...");
     GetLocalizationContent();
 }
 
@@ -488,7 +806,7 @@ RE::ActorValue GetActorValueFromName(const std::string& skillName) {
 }
 
 // =========================================================================================
-// HELPER: Converter ActorValue Enum para String (Necess·rio para o target do any_skill)
+// HELPER: Converter ActorValue Enum para String (Necess√°rio para o target do any_skill)
 // =========================================================================================
 std::string GetNameFromActorValue(RE::ActorValue av) {
     switch (av) {
@@ -517,7 +835,7 @@ std::string GetNameFromActorValue(RE::ActorValue av) {
 }
 
 // =========================================================================================
-// NOVA FUN«√O CENTRALIZADA: Extrai os requisitos de um Perk
+// NOVA FUN√á√ÉO CENTRALIZADA: Extrai os requisitos de um Perk
 // =========================================================================================
 json GetPerkRequirements(RE::BGSPerk* perk) {
     json requirements = json::array();
@@ -537,7 +855,7 @@ json GetPerkRequirements(RE::BGSPerk* perk) {
             funcId
         );
 
-        // Valor de comparaÁ„o (Target Value)
+        // Valor de compara√ß√£o (Target Value)
         float compValue = condItem->data.comparisonValue.f;
         if (condItem->data.flags.global && condItem->data.comparisonValue.g) {
             compValue = condItem->data.comparisonValue.g->value;
@@ -545,7 +863,7 @@ json GetPerkRequirements(RE::BGSPerk* perk) {
 
         json req = json::object();
 
-        // 1. GetGlobalValue (Geralmente usado para NÌvel de Custom Skills)
+        // 1. GetGlobalValue (Geralmente usado para N√≠vel de Custom Skills)
         if (funcId == 12) {
             if (condItem->data.functionData.params[0]) {
                 auto globalVar = static_cast<RE::TESGlobal*>(condItem->data.functionData.params[0]);
@@ -623,7 +941,7 @@ json GetPerkRequirements(RE::BGSPerk* perk) {
             }
         }
 
-        // ⁄nico push_back respons·vel por adicionar o item formatado na lista final
+        // √önico push_back respons√°vel por adicionar o item formatado na lista final
         if (!req.empty()) {
             req["isOr"] = isOr;
             requirements.push_back(req);
@@ -646,7 +964,7 @@ std::vector<std::string> split(const std::string& s, char delimiter) {
     return tokens;
 }
 
-// FunÁ„o de Parsing adaptada para o Prisma
+// Fun√ß√£o de Parsing adaptada para o Prisma
 RE::FormID ParseFormIDString(const std::string& a_formIDStr) {
     if (a_formIDStr.empty()) return 0;
 
@@ -675,11 +993,11 @@ void SyncExternalSkillLevel(const std::string& skillId, const std::string& globa
     RE::FormID globalFormID = ParseFormIDString(globalIdStr);
     if (globalFormID == 0) return;
 
-    // 2. Busca o objeto Global na memÛria
+    // 2. Busca o objeto Global na mem√≥ria
     auto globalVar = RE::TESForm::LookupByID<RE::TESGlobal>(globalFormID);
     if (!globalVar) return;
 
-    // 3. LÍ o valor atual (float) e converte para int
+    // 3. L√™ o valor atual (float) e converte para int
     int externalLevel = static_cast<int>(globalVar->value);
 
     auto mgr = Manager::GetSingleton();
@@ -703,7 +1021,7 @@ void EnrichPerkData(RE::BGSPerk* perk, json& nodeData) {
     auto mgr = Manager::GetSingleton();
     RE::FormID formID = perk->GetFormID();
 
-    // 1. DADOS B¡SICOS (Nome e DescriÁ„o)
+    // 1. DADOS B√ÅSICOS (Nome e Descri√ß√£o)
     // Tenta buscar no cache do Manager primeiro
     const InternalFormInfo* cachedInfo = mgr->GetInfoByID("Perk", formID);
 
@@ -712,12 +1030,12 @@ void EnrichPerkData(RE::BGSPerk* perk, json& nodeData) {
         nodeData["description"] = cachedInfo->description;
     }
     else {
-        // Fallback: Leitura direta da engine (Atualizado para n„o passar o '0' no final)
+        // Fallback: Leitura direta da engine (Atualizado para n√£o passar o '0' no final)
         const char* fn = perk->GetFullName();
         nodeData["name"] = (fn && strlen(fn) > 0) ? fn : "Unknown Perk";
 
         RE::BSString descStr;
-        // FIX: Removemos o ', 0' para garantir que pegue descriÁıes de mods tambÈm, se necess·rio
+        // FIX: Removemos o ', 0' para garantir que pegue descri√ß√µes de mods tamb√©m, se necess√°rio
         static_cast<RE::TESDescription*>(perk)->GetDescription(descStr, perk);
         nodeData["description"] = descStr.empty() ? "" : mgr->ToUTF8(descStr.c_str());
     }
@@ -725,11 +1043,11 @@ void EnrichPerkData(RE::BGSPerk* perk, json& nodeData) {
     // 2. REQUISITOS (Sempre via Engine/Helper centralizado)
     nodeData["requirements"] = GetPerkRequirements(perk);
 
-    // 3. L”GICA DE NEXT RANKS (Recursiva para pegar a cadeia completa)
-    // Verifica se tem um prÛximo perk linkado. 
+    // 3. L√ìGICA DE NEXT RANKS (Recursiva para pegar a cadeia completa)
+    // Verifica se tem um pr√≥ximo perk linkado.
     std::string nextPerkStr = cachedInfo ? cachedInfo->nextPerkId : "";
 
-    // Se n„o tiver no cache, tenta pegar da engine
+    // Se n√£o tiver no cache, tenta pegar da engine
     if (nextPerkStr.empty() && perk->nextPerk) {
         auto nextP = perk->nextPerk;
         auto file = nextP->GetFile(0);
@@ -759,7 +1077,7 @@ void EnrichPerkData(RE::BGSPerk* perk, json& nodeData) {
         if (rankInfo) {
             rankData["name"] = rankInfo->name;
             rankData["description"] = rankInfo->description;
-            nextPerkStr = rankInfo->nextPerkId; // AvanÁa para o prÛximo usando o cache
+            nextPerkStr = rankInfo->nextPerkId; // Avan√ßa para o pr√≥ximo usando o cache
         }
         else {
             // Fallback manual
@@ -770,7 +1088,7 @@ void EnrichPerkData(RE::BGSPerk* perk, json& nodeData) {
             static_cast<RE::TESDescription*>(nextPerkPtr)->GetDescription(rDesc, nextPerkPtr);
             rankData["description"] = rDesc.empty() ? "" : mgr->ToUTF8(rDesc.c_str());
 
-            // Tenta achar o prÛximo pela engine
+            // Tenta achar o pr√≥ximo pela engine
             if (nextPerkPtr->nextPerk) {
                 auto np = nextPerkPtr->nextPerk;
                 auto f = np->GetFile(0);
@@ -783,7 +1101,7 @@ void EnrichPerkData(RE::BGSPerk* perk, json& nodeData) {
             }
         }
 
-        // Importante: Pegar os requirements deste Rank especÌfico!
+        // Importante: Pegar os requirements deste Rank espec√≠fico!
         rankData["requirements"] = GetPerkRequirements(nextPerkPtr);
 
         ranksArray.push_back(rankData);
@@ -794,7 +1112,7 @@ void EnrichPerkData(RE::BGSPerk* perk, json& nodeData) {
 }
 
 // =========================================================================================
-// CONVERS√O DE CUSTOM SKILLS FRAMEWORK (.JSON)
+// CONVERS√ÉO DE CUSTOM SKILLS FRAMEWORK (.JSON)
 // =========================================================================================
 void ConvertCSFJson(const std::filesystem::path& path) {
     std::ifstream file(path);
@@ -806,7 +1124,7 @@ void ConvertCSFJson(const std::filesystem::path& path) {
 
         // 1. Detecta o formato do arquivo
         if (csfData.contains("skills") && csfData["skills"].is_array()) {
-            // Formato de coleÁ„o (ex: SKILLS.json antigo ou mesclado)
+            // Formato de cole√ß√£o (ex: SKILLS.json antigo ou mesclado)
             skillsToProcess = csfData["skills"];
         }
         else if (csfData.contains("id") && csfData.contains("nodes")) {
@@ -814,27 +1132,27 @@ void ConvertCSFJson(const std::filesystem::path& path) {
             skillsToProcess.push_back(csfData);
         }
         else {
-            // N„o È um arquivo de skill v·lido
+            // N√£o √© um arquivo de skill v√°lido
             return;
         }
 
         for (auto& skill : skillsToProcess) {
             if (skill.is_string()) continue;
 
-            // ExtraÁ„o segura do ID
+            // Extra√ß√£o segura do ID
             std::string skillId = path.stem().string();
             if (skill.contains("id") && skill["id"].is_string()) {
                 skillId = skill["id"].get<std::string>();
             }
 
-            // Verifica se a ·rvore j· foi convertida anteriormente
+            // Verifica se a √°rvore j√° foi convertida anteriormente
             if (PrismaTreeExists(skillId)) {
                 logger::debug("Skill tree '{}' ja existe. Ignorando conversao CSF.", skillId);
-                continue; // Pula para a prÛxima skill sem reconverter
+                continue; // Pula para a pr√≥xima skill sem reconverter
             }
 
 
-            // ExtraÁ„o segura do Level (evita crash se for "level": null)
+            // Extra√ß√£o segura do Level (evita crash se for "level": null)
             std::string levelGlobalStr = "";
             if (skill.contains("level") && skill["level"].is_string()) {
                 levelGlobalStr = skill["level"].get<std::string>();
@@ -875,7 +1193,7 @@ void ConvertCSFJson(const std::filesystem::path& path) {
                 prismaTree["experienceFormula"] = skill["experienceFormula"];
             }
             else {
-                // Padr„o se n„o existir no arquivo original
+                // Padr√£o se n√£o existir no arquivo original
                 prismaTree["experienceFormula"] = {
                     {"useMult", 1.0},
                     {"useOffset", 0.0},
@@ -908,14 +1226,14 @@ void ConvertCSFJson(const std::filesystem::path& path) {
                                 translatedLinks.push_back(idToPerkMap[linkStr]);
                             }
                             else {
-                                // Se n„o estiver no mapa (ex: ja È um perk id), mantÈm o original
+                                // Se n√£o estiver no mapa (ex: ja √© um perk id), mant√©m o original
                                 translatedLinks.push_back(linkStr);
                             }
                         }
                     }
                     pNode["links"] = translatedLinks;
                     // --- ENRIQUECIMENTO ---
-                    // Tenta achar o perk na memÛria para pegar descriÁ„o e requerimentos reais
+                    // Tenta achar o perk na mem√≥ria para pegar descri√ß√£o e requerimentos reais
                     RE::FormID formID = ParseFormIDString(perkStr);
                     if (formID != 0) {
                         auto perk = RE::TESForm::LookupByID<RE::BGSPerk>(formID);
@@ -945,7 +1263,7 @@ void ConvertCSFJson(const std::filesystem::path& path) {
 }
 
 // =========================================================================================
-// CONVERS√O DE LEGACY CONFIG (.TXT)
+// CONVERS√ÉO DE LEGACY CONFIG (.TXT)
 // =========================================================================================
 void ConvertLegacyConfig(const std::filesystem::path& path) {
     std::string filename = path.filename().string();
@@ -971,7 +1289,7 @@ void ConvertLegacyConfig(const std::filesystem::path& path) {
     float improveMult = 1.0f;
     float improveOffset = 0.0f;
 
-    // Estrutura tempor·ria para guardar os dados crus antes de processar links
+    // Estrutura tempor√°ria para guardar os dados crus antes de processar links
     struct RawNode {
         uint32_t perkIdInt = 0;
         std::string perkFile = "";
@@ -986,7 +1304,7 @@ void ConvertLegacyConfig(const std::filesystem::path& path) {
     while (std::getline(file, line)) {
         if (line.empty() || line[0] == '#') continue;
 
-        // Limpeza b·sica de CR (carriage return) se houver
+        // Limpeza b√°sica de CR (carriage return) se houver
         if (!line.empty() && line.back() == '\r') line.pop_back();
 
         if (line.find("Name =") != std::string::npos) {
@@ -1019,7 +1337,7 @@ void ConvertLegacyConfig(const std::filesystem::path& path) {
             }
         }
 
-        // --- PARSING OPCIONAL DA F”RMULA NO TXT ---
+        // --- PARSING OPCIONAL DA F√ìRMULA NO TXT ---
         auto ParseFloatVal = [&](const std::string& keyStr, float& targetVar) {
             if (line.find(keyStr) != std::string::npos) {
                 size_t eqPos = line.find("=");
@@ -1097,18 +1415,18 @@ void ConvertLegacyConfig(const std::filesystem::path& path) {
     // Map auxiliar: Index do Node -> ID Formatado (para resolver os links depois)
     std::map<int, std::string> nodeIndexToID;
 
-    // Vari·veis para encontrar os limites (Bounding Box) da ·rvore
+    // Vari√°veis para encontrar os limites (Bounding Box) da √°rvore
     float minX = 10000.0f, maxX = -10000.0f;
     float minY = 10000.0f, maxY = -10000.0f;
 
-    // Passada 1: Criar os IDs formatados e descobrir o tamanho real da ·rvore
+    // Passada 1: Criar os IDs formatados e descobrir o tamanho real da √°rvore
     for (auto const& [idx, data] : rawNodes) {
         if (idx == 0 || data.perkIdInt == 0) continue;
 
         std::string fID = FormatLegacyID(data.perkFile, data.perkIdInt);
         nodeIndexToID[idx] = fID;
 
-        // Calcula a posiÁ„o real do nÛ no espaÁo do Skyrim
+        // Calcula a posi√ß√£o real do n√≥ no espa√ßo do Skyrim
         float trueX = data.gridX + data.x;
         float trueY = data.gridY + data.y;
 
@@ -1119,10 +1437,10 @@ void ConvertLegacyConfig(const std::filesystem::path& path) {
         if (trueY > maxY) maxY = trueY;
     }
 
-    // Calcula a ·rea total que a ·rvore ocupa
+    // Calcula a √°rea total que a √°rvore ocupa
     float rangeX = (maxX - minX);
     float rangeY = (maxY - minY);
-    if (rangeX <= 0) rangeX = 1.0f; // Previne divis„o por zero caso a ·rvore tenha sÛ 1 perk
+    if (rangeX <= 0) rangeX = 1.0f; // Previne divis√£o por zero caso a √°rvore tenha s√≥ 1 perk
     if (rangeY <= 0) rangeY = 1.0f;
 
     // Passada 2: Montar o JSON com as coordenadas normalizadas
@@ -1135,7 +1453,7 @@ void ConvertLegacyConfig(const std::filesystem::path& path) {
         float trueX = data.gridX + data.x;
         float trueY = data.gridY + data.y;
 
-        // NORMALIZA«√O PARA A UI (Garante que caber· na tela, independente do arquivo original)
+        // NORMALIZA√á√ÉO PARA A UI (Garante que caber√° na tela, independente do arquivo original)
         // Espreme o X para ficar entre 15% e 85% da tela
         float normalizedX = ((trueX - minX) / rangeX) * 70.0f + 15.0f;
 
@@ -1151,13 +1469,13 @@ void ConvertLegacyConfig(const std::filesystem::path& path) {
 
         json links = json::array();
         if (!data.rawLinks.empty()) {
-            // CORRE«√O DOS LINKS: Substituir espaÁos por vÌrgulas
+            // CORRE√á√ÉO DOS LINKS: Substituir espa√ßos por v√≠rgulas
             std::string safeLinks = data.rawLinks;
             std::replace(safeLinks.begin(), safeLinks.end(), ' ', ',');
 
             std::vector<std::string> linkIndexes = split(safeLinks, ',');
             for (const auto& sIdx : linkIndexes) {
-                if (sIdx.empty()) continue; // Ignora espaÁos em branco vazios " "
+                if (sIdx.empty()) continue; // Ignora espa√ßos em branco vazios " "
 
                 try {
                     std::string cleanIdx = sIdx;
@@ -1207,7 +1525,7 @@ void ScanAndConvertExternalSkills() {
     std::filesystem::path csfDir("Data\\SKSE\\Plugins\\CustomSkills");
     if (std::filesystem::exists(csfDir)) {
         for (const auto& entry : std::filesystem::recursive_directory_iterator(csfDir)) {
-            // Verifica se È um arquivo e se a extens„o È .json
+            // Verifica se √© um arquivo e se a extens√£o √© .json
             if (entry.is_regular_file() && entry.path().extension() == ".json") {
 
                 std::string filename = entry.path().filename().string();
@@ -1352,7 +1670,7 @@ void ExportVanillaPerkTree(RE::ActorValue actorValue, const std::string& skillNa
         queue.pop();
 
         if (node->perk) {
-            // C¡LCULO CORRETO: Grid (inteiro) + Position (float offset)
+            // C√ÅLCULO CORRETO: Grid (inteiro) + Position (float offset)
             float curX = static_cast<float>(node->perkGridX) + node->horizontalPosition;
             float curY = static_cast<float>(node->perkGridY) + node->verticalPosition;
 
@@ -1426,19 +1744,19 @@ void ExportVanillaPerkTree(RE::ActorValue actorValue, const std::string& skillNa
         nodeData["perk"] = fID;
         nodeData["name"] = perk->GetFullName() ? perk->GetFullName() : "Unknown";
 
-        // --- NORMALIZA«√O PARA A UI ---
+        // --- NORMALIZA√á√ÉO PARA A UI ---
         // Mirror X: Inverte o X para bater com o visual do Skyrim (Max - Atual)
         // Deixamos margem de 15% nas laterais para centralizar melhor
         float normalizedX = ((maxX - tNode.rawX) / rangeX) * 70.0f + 15.0f;
 
-        // Inverter Y: Skyrim 0 È a base, UI 0 È o topo.
+        // Inverter Y: Skyrim 0 √© a base, UI 0 √© o topo.
         // Colocamos entre 20% e 80% da altura da tela
         float normalizedY = 80.0f - ((tNode.rawY - minY) / rangeY) * 60.0f;
 
         nodeData["x"] = normalizedX;
         nodeData["y"] = normalizedY;
 
-        // Metadados b·sicos
+        // Metadados b√°sicos
         RE::BSString descStr;
         perk->TESDescription::GetDescription(descStr, perk, 0);
         nodeData["description"] = mgr->ToUTF8(descStr.c_str());
@@ -1446,7 +1764,7 @@ void ExportVanillaPerkTree(RE::ActorValue actorValue, const std::string& skillNa
 
         EnrichPerkData(perk, nodeData);
         ApplyDefaultSpecialResourceCost(nodeData, defaultSpecialResourceId);
-        // Conexıes (Links)
+        // Conex√µes (Links)
         json connections = json::array();
         for (auto child : tNode.original->children) {
             if (child && child->perk) {
@@ -1466,7 +1784,7 @@ void ExportVanillaPerkTree(RE::ActorValue actorValue, const std::string& skillNa
     }
 }
 
-// FunÁ„o para varrer todas as skills Vanilla (Categorizadas)
+// Fun√ß√£o para varrer todas as skills Vanilla (Categorizadas)
 void GenerateAllVanillaTrees() {
     logger::info("Verificando a existencia de perk trees vanilla...");
 
@@ -1634,28 +1952,44 @@ json GetSettings() {
     return g_settingsCache;
 }
 
-// FunÁ„o que calcula os valores efetivos para um determinado nÌvel
-json GetEffectiveSettings(int targetLevel) {
+static int GetRuleSpecificity(const json& rule, RE::Actor* actor) {
+    const std::string scope = rule.value("scope", "");
+    if (scope.empty()) return actor && actor->IsPlayerRef() ? 20 : -1;
+    if (scope == "all") return 10;
+    if (scope == "player") return actor && actor->IsPlayerRef() ? 20 : -1;
+    if (scope == "followers") return actor && !actor->IsPlayerRef() ? 20 : -1;
+    if (scope == "actor") {
+        return actor && rule.value("actorKey", "") == ActorRuleKey(actor) ? 30 : -1;
+    }
+    return -1;
+}
+
+// Calcula os valores efetivos para um ator e n√≠vel, respeitando a preced√™ncia
+// base < global < player/followers < ator espec√≠fico.
+json GetEffectiveSettings(int targetLevel, RE::Actor* actor) {
     json fullSettings = GetSettings();
     json eff = fullSettings["base"];
     int hardCap = eff.value("skillCap", 100);
-    // Carrega as regras do arquivo separado
     json rules = GetLevelRules();
 
     if (rules.is_array()) {
-        std::vector<json> sortedRules;
-        for (auto& r : rules) sortedRules.push_back(r);
+        std::vector<std::pair<int, json>> sortedRules;
+        for (auto& r : rules) {
+            const int specificity = GetRuleSpecificity(r, actor);
+            if (specificity >= 0 && r.value("level", 0) <= targetLevel) {
+                sortedRules.emplace_back(specificity, r);
+            }
+        }
 
-        // Ordena por nÌvel
-        std::sort(sortedRules.begin(), sortedRules.end(), [](const json& a, const json& b) {
-            return a.value("level", 0) < b.value("level", 0);
+        std::sort(sortedRules.begin(), sortedRules.end(), [](const auto& a, const auto& b) {
+            if (a.first != b.first) return a.first < b.first;
+            return a.second.value("level", 0) < b.second.value("level", 0);
             });
 
-        for (auto& r : sortedRules) {
-            if (r.value("level", 0) <= targetLevel) {
-                // Sobrescreve os valores da base
-                for (auto& [key, val] : r.items()) {
-                    if (key != "level") eff[key] = val;
+        for (auto& [specificity, rule] : sortedRules) {
+            for (auto& [key, val] : rule.items()) {
+                if (key != "level" && key != "scope" && key != "actorKey" && key != "actorName") {
+                    eff[key] = val;
                 }
             }
         }
@@ -1667,6 +2001,10 @@ json GetEffectiveSettings(int targetLevel) {
     }
 
     return eff;
+}
+
+json GetEffectiveSettings(int targetLevel) {
+    return GetEffectiveSettings(targetLevel, RE::PlayerCharacter::GetSingleton());
 }
 
 static void SaveRulesFromUI(const char* jsonArgs) {
@@ -1682,7 +2020,7 @@ static void SaveRulesFromUI(const char* jsonArgs) {
     }
 }
 
-// Salva as configuraÁıes passando o JSON objeto
+// Salva as configura√ß√µes passando o JSON objeto
 void SaveSettingsToFile(const json& settingsObj) {
     std::filesystem::create_directories("Data\\PrismaUI\\views\\" PRODUCT_NAME);
     std::ofstream file("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Settings.json");
@@ -1713,11 +2051,11 @@ json GetLoadedSkillTreeConfigs() {
                 json tree;
                 bool useCache = false;
 
-                // 1. Verifica se est· no cache e se o arquivo no disco N√O foi alterado
+                // 1. Verifica se est√° no cache e se o arquivo no disco N√ÉO foi alterado
                 if (g_treeCache.find(filePath) != g_treeCache.end() &&
                     g_treeCache[filePath].lastWriteTime == currentWriteTime) {
 
-                    tree = g_treeCache[filePath].data; // Pega da memÛria!
+                    tree = g_treeCache[filePath].data; // Pega da mem√≥ria!
                     useCache = true;
                 }
                 else {
@@ -1841,7 +2179,7 @@ json GetUISettings() {
     return g_uiSettingsCache;
 }
 
-// Salvar configuraÁıes da UI vindas do React
+// Salvar configura√ß√µes da UI vindas do React
 static void SaveUISettingsFromUI(const char* jsonArgs) {
     if (!jsonArgs) return;
     try {
@@ -1868,13 +2206,17 @@ static void SaveUISettingsFromUI(const char* jsonArgs) {
 std::string GetPlayerSkillsJSON() {
     try {
         auto player = RE::PlayerCharacter::GetSingleton();
-        if (!player || !player->Is3DLoaded()) return "{\"player\":null, \"trees\":[]}";
+        auto actor = GetSelectedActor();
+        if (!player || !actor || !actor->Is3DLoaded()) return "{\"player\":null, \"trees\":[]}";
 
         auto playerSkills = player->GetPlayerRuntimeData().skills;
-        if (playerSkills) {
+        if (!actor->IsPlayerRef()) playerSkills = nullptr;
+        auto mgr = Manager::GetSingleton();
+        mgr->EnsureActorProgress(actor);
+        if (actor->IsPlayerRef() && playerSkills) {
             while (playerSkills->CanLevelUp()) {
                 playerSkills->AdvanceLevel(false);
-                g_pendingLevelUps++;
+                mgr->QueuePendingLevelUps(actor, 1);
             }
         }
 
@@ -1886,7 +2228,7 @@ std::string GetPlayerSkillsJSON() {
             int val = 0;
             if (!actorValueStr.empty()) {
                 RE::ActorValue av = GetActorValueFromName(actorValueStr);
-                auto avOwner = player->AsActorValueOwner();
+                auto avOwner = actor->AsActorValueOwner();
                 if (av != RE::ActorValue::kNone && avOwner) {
                     val = static_cast<int>(std::round(avOwner->GetActorValue(av)));
                 }
@@ -1902,9 +2244,9 @@ std::string GetPlayerSkillsJSON() {
             resourceValuesMap[res.value("id", "")] = val;
         }
 
-        // --- 1. DADOS B¡SICOS DO JOGADOR (HEADER) ---
-        std::string playerName = player->GetName();
-        auto avOwner = player->AsActorValueOwner();
+        // --- 1. DADOS B√ÅSICOS DO JOGADOR (HEADER) ---
+        std::string playerName = actor->GetName();
+        auto avOwner = actor->AsActorValueOwner();
 
         float hpCur = avOwner->GetActorValue(RE::ActorValue::kHealth);
         float hpMax = avOwner->GetBaseActorValue(RE::ActorValue::kHealth);
@@ -1912,13 +2254,15 @@ std::string GetPlayerSkillsJSON() {
         float mpMax = avOwner->GetBaseActorValue(RE::ActorValue::kMagicka);
         float spCur = avOwner->GetActorValue(RE::ActorValue::kStamina);
         float spMax = avOwner->GetBaseActorValue(RE::ActorValue::kStamina);
-        uint8_t perkPoints = player->GetPlayerRuntimeData().perkCount;
-        int playerLevel = player->GetLevel();
-        int dragonSouls = static_cast<int>(avOwner->GetActorValue(RE::ActorValue::kDragonSouls));
+        int perkPoints = mgr->GetActorPerkPoints(actor);
+        int playerLevel = actor->GetLevel();
+        int realPlayerLevel = player->GetLevel();
+        int dragonSouls = actor->IsPlayerRef() ?
+            static_cast<int>(avOwner->GetActorValue(RE::ActorValue::kDragonSouls)) : 0;
         bool hasPendingLevelUp = false;
         float playerLevelProgress = 0.0f;
 
-        json currentEffSettings = GetEffectiveSettings(playerLevel);
+        json currentEffSettings = GetEffectiveSettings(playerLevel, actor);
         int globalSkillCap = currentEffSettings.value("skillCap", 100);
         bool useDynamicCap = currentEffSettings.value("useDynamicSkillCap", true);
         int baseSkillCap = currentEffSettings.value("baseSkillCap", 18);
@@ -1926,7 +2270,7 @@ std::string GetPlayerSkillsJSON() {
         bool applyRacial = currentEffSettings.value("applyRacialBonusToCap", true);
         bool useBaseSkill = currentEffSettings.value("useBaseSkillLevel", true);
 
-        if (playerSkills) {
+        if (actor->IsPlayerRef() && playerSkills) {
             hasPendingLevelUp = playerSkills->CanLevelUp();
             if (playerSkills->data && playerSkills->data->levelThreshold > 0) {
                 float currentXP = playerSkills->data->xp;
@@ -1936,11 +2280,14 @@ std::string GetPlayerSkillsJSON() {
             }
         }
         std::string raceName = "Unknown";
-        if (auto race = player->GetRace()) {
+        if (auto race = actor->GetRace()) {
             raceName = race->GetFullName();
         }
 
         json playerData = {
+            {"id", ActorRuntimeKey(actor)},
+            {"ruleKey", ActorRuleKey(actor)},
+            {"kind", actor->IsPlayerRef() ? "player" : "follower"},
             {"name", playerName},
             {"health", {{"current", hpCur}, {"max", hpMax}}},
             {"magicka", {{"current", mpCur}, {"max", mpMax}}},
@@ -1950,21 +2297,21 @@ std::string GetPlayerSkillsJSON() {
             {"levelProgress", playerLevelProgress},
             {"race", raceName},
             {"dragonSouls", dragonSouls},
-            {"title", "Dragonborn"},
-            {"pendingLevelUps", g_pendingLevelUps},
-            {"isLevelUpMenuOpen", Prisma::IsLevelUpMenuOpen()},
+            {"title", actor->IsPlayerRef() ? "Dragonborn" : "Companion"},
+            {"pendingLevelUps", mgr->GetPendingLevelUps(actor)},
+            {"isLevelUpMenuOpen", actor->IsPlayerRef() && Prisma::IsLevelUpMenuOpen()},
             {"resourceValues", resourceValuesMap}
         };
 
-        // --- 2. COLETA DE NOVAS INFORMA«’ES GLOBAIS PARA OS REQUISITOS ---
+        // --- 2. COLETA DE NOVAS INFORMA√á√ïES GLOBAIS PARA OS REQUISITOS ---
 
         // A. Vampiro e Lobisomem (Usando as Keywords nativas da Engine)
-        bool isVampire = player->HasKeywordString("Vampire") || player->HasKeywordString("VampireActive");
-        bool isWerewolf = player->HasKeywordString("Werewolf") || player->HasKeywordString("ActorTypeCreature");
+        bool isVampire = actor->HasKeywordString("Vampire") || actor->HasKeywordString("VampireActive");
+        bool isWerewolf = actor->HasKeywordString("Werewolf") || actor->HasKeywordString("ActorTypeCreature");
 
-        // B. Magias Conhecidas (SeparaÁ„o por Escola)
+        // B. Magias Conhecidas (Separa√ß√£o por Escola)
         std::unordered_map<std::string, int> spellsKnownBySchool;
-        for (auto spell : player->GetActorRuntimeData().addedSpells) {
+        for (auto spell : actor->GetActorRuntimeData().addedSpells) {
             if (spell && spell->Is(RE::FormType::Spell)) {
                 auto sp = spell->As<RE::SpellItem>();
                 if (sp && sp->GetSpellType() == RE::MagicSystem::SpellType::kSpell) {
@@ -1979,44 +2326,44 @@ std::string GetPlayerSkillsJSON() {
         }
 
         // C. Kills (Abates Totais)
-        // O MiscStatManager n„o È acessÌvel t„o facilmente, mas se vocÍ usa Mods que guardam kills numa 
-        // vari·vel global ou num ActorValue n„o utilizado, modifique aqui. (Fallback setado para 0).
+        // O MiscStatManager n√£o √© acess√≠vel t√£o facilmente, mas se voc√™ usa Mods que guardam kills numa
+        // vari√°vel global ou num ActorValue n√£o utilizado, modifique aqui. (Fallback setado para 0).
         int totalKills = 0; // Ex: player->GetActorValue(RE::ActorValue::kVariable01); se estiver salvo em AV.
 
-        // ObtÈm as configuraÁıes carregadas
+        // Obt√©m as configura√ß√µes carregadas
         json allTrees = GetLoadedSkillTreeConfigs();
 
-        // D. Mapa Global de Levels de TODAS as Skills (necess·rio para o requisito de Any Skill)
+        // D. Mapa Global de Levels de TODAS as Skills (necess√°rio para o requisito de Any Skill)
         std::unordered_map<std::string, int> allSkillLevelsMap;
         std::unordered_map<std::string, bool> unlockedNodesMap;
 
-        // --- PRIMEIRA VARREDURA: COLETAR NÕVEIS E PERKS ---
+        // --- PRIMEIRA VARREDURA: COLETAR N√çVEIS E PERKS ---
         for (auto& tree : allTrees) {
             bool isVanilla = tree.value("isVanilla", false);
             std::string skillName = tree.value("name", "Unknown");
 
-            // 1. L  O NÕVEL INICIAL IMUT¡VEL DO ARQUIVO JSON
-            // Para Vanilla È 15. Para Custom pode ser qualquer valor (ex: 1).
+            // 1. L√ä O N√çVEL INICIAL IMUT√ÅVEL DO ARQUIVO JSON
+            // Para Vanilla √© 15. Para Custom pode ser qualquer valor (ex: 1).
             int staticInitialLevel = tree.value("initialLevel", 15);
 
-            // --- INÕCIO: NOVO C¡LCULO DE DYNAMIC SKILL CAP ---
+            // --- IN√çCIO: NOVO C√ÅLCULO DE DYNAMIC SKILL CAP ---
             int treeCap = globalSkillCap;
             if (useDynamicCap) {
-                // 2. C¡LCULO ORG¬NICO DO CAP
-                // O Cap baseia-se puramente no nÌvel inicial da skill + (NÌvel do Player * Multiplicador)
+                // 2. C√ÅLCULO ORG√ÇNICO DO CAP
+                // O Cap baseia-se puramente no n√≠vel inicial da skill + (N√≠vel do Player * Multiplicador)
                 // Ex: Vanilla Lvl 1: 15 + (1 * 2) = 17
                 // Ex: Custom Lvl 1:   5 + (1 * 2) = 7
                 treeCap = staticInitialLevel + static_cast<int>(playerLevel * capMult);
 
-                // Aplica bÙnus raciais se ativado nas configuraÁıes
+                // Aplica b√¥nus raciais se ativado nas configura√ß√µes
                 if (applyRacial) {
                     int racialBonus = 0;
                     if (isVanilla) {
                         RE::ActorValue av = GetActorValueFromName(skillName);
-                        if (av != RE::ActorValue::kNone && player->GetRace()) {
+                        if (av != RE::ActorValue::kNone && actor->GetRace()) {
                             for (uint32_t i = 0; i < 7; ++i) {
-                                if (player->GetRace()->data.skillBoosts[i].skill == av) {
-                                    racialBonus = player->GetRace()->data.skillBoosts[i].bonus;
+                                if (actor->GetRace()->data.skillBoosts[i].skill == av) {
+                                    racialBonus = actor->GetRace()->data.skillBoosts[i].bonus;
                                     break;
                                 }
                             }
@@ -2025,28 +2372,28 @@ std::string GetPlayerSkillsJSON() {
                     treeCap += racialBonus;
                 }
 
-                // Impede que o cap din‚mico ultrapasse o limite global/da regra (Hard Cap)
+                // Impede que o cap din√¢mico ultrapasse o limite global/da regra (Hard Cap)
                 if (treeCap > globalSkillCap) {
                     treeCap = globalSkillCap;
                 }
             }
 
             tree["cap"] = treeCap;
-            // --- FIM: C¡LCULO DE DYNAMIC SKILL CAP ---
+            // --- FIM: C√ÅLCULO DE DYNAMIC SKILL CAP ---
 
-            // A partir daqui usamos a leitura normal da Engine (mut·vel) para saber o progresso da barra
+            // A partir daqui usamos a leitura normal da Engine (mut√°vel) para saber o progresso da barra
             int currentLevel = staticInitialLevel;
             float progressPercent = 0.0f;
 
             if (isVanilla) {
                 RE::ActorValue av = GetActorValueFromName(skillName);
                 if (av != RE::ActorValue::kNone) {
-                    // Aqui sim pegamos o nÌvel atual que o jogador upou!
+                    // Aqui sim pegamos o n√≠vel atual que o jogador upou!
                     if (useBaseSkill) {
-                        currentLevel = static_cast<int>(player->AsActorValueOwner()->GetBaseActorValue(av));
+                        currentLevel = static_cast<int>(actor->AsActorValueOwner()->GetBaseActorValue(av));
                     }
                     else {
-                        currentLevel = static_cast<int>(player->AsActorValueOwner()->GetActorValue(av));
+                        currentLevel = static_cast<int>(actor->AsActorValueOwner()->GetActorValue(av));
                     }
                     if (playerSkills && playerSkills->data) {
                         uint32_t avInt = static_cast<uint32_t>(av);
@@ -2063,9 +2410,8 @@ std::string GetPlayerSkillsJSON() {
                 }
             }
             else {
-                auto mgr = Manager::GetSingleton();
-                int baseLevel = mgr->GetCustomSkillLevel(player, skillName);
-                int bonusLevel = mgr->GetCustomSkillBonus(player, skillName);
+                int baseLevel = mgr->GetCustomSkillLevel(actor, skillName);
+                int bonusLevel = mgr->GetCustomSkillBonus(actor, skillName);
 
                 if (useBaseSkill) {
                     currentLevel = baseLevel;
@@ -2074,7 +2420,7 @@ std::string GetPlayerSkillsJSON() {
                     currentLevel = baseLevel + bonusLevel;
                 }
 
-                float currentXP = mgr->GetCustomSkillXP(player, skillName);
+                float currentXP = mgr->GetCustomSkillXP(actor, skillName);
                 float reqXP = mgr->GetRequiredXP(skillName, baseLevel);
 
                 if (reqXP > 0.0f) {
@@ -2087,7 +2433,7 @@ std::string GetPlayerSkillsJSON() {
 
             tree["currentLevel"] = currentLevel;
             tree["currentProgress"] = progressPercent;
-            allSkillLevelsMap[skillName] = currentLevel; // Registra na memÛria global
+            allSkillLevelsMap[skillName] = currentLevel; // Registra na mem√≥ria global
 
             // Varre Perks
             if (tree.contains("nodes") && tree["nodes"].is_array()) {
@@ -2099,7 +2445,7 @@ std::string GetPlayerSkillsJSON() {
                         RE::FormID fullID = ParseFormIDString(perkStr);
                         if (fullID != 0) {
                             auto perk = RE::TESForm::LookupByID<RE::BGSPerk>(fullID);
-                            if (perk && player->HasPerk(perk)) hasPerk = true;
+                            if (perk && ActorOwnsPerk(actor, perk)) hasPerk = true;
                         }
                     }
 
@@ -2112,7 +2458,7 @@ std::string GetPlayerSkillsJSON() {
                                 RE::FormID fullID = ParseFormIDString(rankPerk);
                                 if (fullID != 0) {
                                     auto rPerk = RE::TESForm::LookupByID<RE::BGSPerk>(fullID);
-                                    if (rPerk && player->HasPerk(rPerk)) rankHas = true;
+                                    if (rPerk && ActorOwnsPerk(actor, rPerk)) rankHas = true;
                                 }
                             }
                             rank["isUnlocked"] = rankHas;
@@ -2133,14 +2479,15 @@ std::string GetPlayerSkillsJSON() {
         for (auto& tree : allTrees) {
             int currentTreeLevel = tree.value("currentLevel", 15);
 
-            // AVALIA REQUISITOS DA ¡RVORE (Se existirem)
+            // AVALIA REQUISITOS DA √ÅRVORE (Se existirem)
             if (tree.contains("treeRequirements") && tree["treeRequirements"].is_array()) {
                 for (auto& req : tree["treeRequirements"]) {
                     bool isMet = false;
                     std::string reqType = req.value("type", "");
 
                     if (reqType == "level") isMet = (currentTreeLevel >= req.value("value", 0));
-                    else if (reqType == "player_level") isMet = (playerLevel >= req.value("value", 0));
+                    else if (reqType == "player_level") isMet = (realPlayerLevel >= req.value("value", 0));
+                    else if (reqType == "actor_level") isMet = (playerLevel >= req.value("value", 0));
                     else if (reqType == "perk") isMet = unlockedNodesMap[req.value("value", "")];
                     else if (reqType == "is_vampire") isMet = isVampire;
                     else if (reqType == "is_werewolf") isMet = isWerewolf;
@@ -2158,7 +2505,7 @@ std::string GetPlayerSkillsJSON() {
                         RE::FormID spellID = ParseFormIDString(req.value("value", ""));
                         if (spellID != 0) {
                             auto spell = RE::TESForm::LookupByID<RE::SpellItem>(spellID);
-                            if (spell) isMet = player->HasSpell(spell); 
+                            if (spell) isMet = actor->HasSpell(spell);
                         }
                     }
                     else if (reqType == "location_discovered") {
@@ -2179,7 +2526,7 @@ std::string GetPlayerSkillsJSON() {
                         RE::FormID factID = ParseFormIDString(req.value("value", ""));
                         if (factID != 0) {
                             auto fact = RE::TESForm::LookupByID<RE::TESFaction>(factID);
-                            if (fact) isMet = player->IsInFaction(fact);
+                            if (fact) isMet = actor->IsInFaction(fact);
                         }
                     }
                     else if (reqType == "book_read") {
@@ -2193,7 +2540,7 @@ std::string GetPlayerSkillsJSON() {
                         RE::FormID shoutID = ParseFormIDString(req.value("value", ""));
                         if (shoutID != 0) {
                             auto shout = RE::TESForm::LookupByID<RE::TESShout>(shoutID);
-                            if (shout) isMet = player->HasShout(shout);
+                            if (shout) isMet = actor->HasShout(shout);
                         }
                     }
                     else isMet = true; // Fallback
@@ -2209,14 +2556,15 @@ std::string GetPlayerSkillsJSON() {
 
                     if (node.contains("requirements") && node["requirements"].is_array()) {
                         bool currentChainResult = false; // Resultado do grupo OR atual
-                        bool insideOrChain = false;      // Estamos dentro de uma sequÍncia de ORs?
+                        bool insideOrChain = false;      // Estamos dentro de uma sequ√™ncia de ORs?
                         bool hasProcessedAny = false;    // Para evitar validar arrays vazios como true sem checar
                         for (auto& req : node["requirements"]) {
                             bool isMet = false;
                             std::string reqType = req.value("type", "");
 
                             if (reqType == "level") isMet = (currentTreeLevel >= req.value("value", 0));
-                            else if (reqType == "player_level") isMet = (playerLevel >= req.value("value", 0));
+                            else if (reqType == "player_level") isMet = (realPlayerLevel >= req.value("value", 0));
+                            else if (reqType == "actor_level") isMet = (playerLevel >= req.value("value", 0));
                             else if (reqType == "perk") isMet = unlockedNodesMap[req.value("value", "")];
                             else if (reqType == "is_vampire") isMet = isVampire;
                             else if (reqType == "is_werewolf") isMet = isWerewolf;
@@ -2234,7 +2582,7 @@ std::string GetPlayerSkillsJSON() {
                                 RE::FormID spellID = ParseFormIDString(req.value("value", ""));
                                 if (spellID != 0) {
                                     auto spell = RE::TESForm::LookupByID<RE::SpellItem>(spellID);
-                                    if (spell) isMet = player->HasSpell(spell); 
+                                    if (spell) isMet = actor->HasSpell(spell);
                                 }
                             }
                             else if (reqType == "location_discovered") {
@@ -2255,7 +2603,7 @@ std::string GetPlayerSkillsJSON() {
                                 RE::FormID factID = ParseFormIDString(req.value("value", ""));
                                 if (factID != 0) {
                                     auto fact = RE::TESForm::LookupByID<RE::TESFaction>(factID);
-                                    if (fact) isMet = player->IsInFaction(fact);
+                                    if (fact) isMet = actor->IsInFaction(fact);
                                 }
                             }
                             else if (reqType == "book_read") {
@@ -2269,26 +2617,26 @@ std::string GetPlayerSkillsJSON() {
                                 RE::FormID shoutID = ParseFormIDString(req.value("value", ""));
                                 if (shoutID != 0) {
                                     auto shout = RE::TESForm::LookupByID<RE::TESShout>(shoutID);
-                                    if (shout) isMet = player->HasShout(shout);
+                                    if (shout) isMet = actor->HasShout(shout);
                                 }
                             }
                             else isMet = true;
 
                             req["isMet"] = isMet;
                             hasProcessedAny = true;
-                            // 2. LÛgica CombinatÛria (AND/OR)
+                            // 2. L√≥gica Combinat√≥ria (AND/OR)
                             bool isOrLink = req.value("isOr", false);
 
                             if (isOrLink) {
-                                // Este item conecta com o PR”XIMO via OR.
+                                // Este item conecta com o PR√ìXIMO via OR.
                                 // Se este item for verdadeiro, o grupo OR todo vira verdadeiro.
                                 if (isMet) currentChainResult = true;
                                 insideOrChain = true;
                             }
                             else {
-                                // Este item N√O tem OR, ent„o ele È o fim de uma cadeia (ou um AND isolado)
+                                // Este item N√ÉO tem OR, ent√£o ele √© o fim de uma cadeia (ou um AND isolado)
                                 if (insideOrChain) {
-                                    // Fim da cadeia OR. Verificamos o ˙ltimo elemento.
+                                    // Fim da cadeia OR. Verificamos o √∫ltimo elemento.
                                     if (isMet) currentChainResult = true;
 
                                     // Aplica o resultado da cadeia no total
@@ -2299,13 +2647,13 @@ std::string GetPlayerSkillsJSON() {
                                     currentChainResult = false;
                                 }
                                 else {
-                                    // AND Padr„o
+                                    // AND Padr√£o
                                     if (!isMet) canUnlock = false;
                                 }
                             }
                         }
 
-                        // SeguranÁa: Se terminou o loop e ainda est·vamos numa cadeia OR (˙ltimo item tinha flag OR erroneamente)
+                        // Seguran√ßa: Se terminou o loop e ainda est√°vamos numa cadeia OR (√∫ltimo item tinha flag OR erroneamente)
                         if (insideOrChain) {
                             if (!currentChainResult) canUnlock = false;
                         }
@@ -2325,7 +2673,8 @@ std::string GetPlayerSkillsJSON() {
                                     std::string reqType = req.value("type", "");
 
                                     if (reqType == "level") isMet = (currentTreeLevel >= req.value("value", 0));
-                                    else if (reqType == "player_level") isMet = (playerLevel >= req.value("value", 0));
+                                    else if (reqType == "player_level") isMet = (realPlayerLevel >= req.value("value", 0));
+                                    else if (reqType == "actor_level") isMet = (playerLevel >= req.value("value", 0));
                                     else if (reqType == "perk") isMet = unlockedNodesMap[req.value("value", "")];
                                     else if (reqType == "is_vampire") isMet = isVampire;
                                     else if (reqType == "is_werewolf") isMet = isWerewolf;
@@ -2343,7 +2692,7 @@ std::string GetPlayerSkillsJSON() {
                                         RE::FormID spellID = ParseFormIDString(req.value("value", ""));
                                         if (spellID != 0) {
                                             auto spell = RE::TESForm::LookupByID<RE::SpellItem>(spellID);
-                                            if (spell) isMet = player->HasSpell(spell); 
+                                            if (spell) isMet = actor->HasSpell(spell);
                                         }
                                     }
                                     else if (reqType == "location_discovered") {
@@ -2364,7 +2713,7 @@ std::string GetPlayerSkillsJSON() {
                                         RE::FormID factID = ParseFormIDString(req.value("value", ""));
                                         if (factID != 0) {
                                             auto fact = RE::TESForm::LookupByID<RE::TESFaction>(factID);
-                                            if (fact) isMet = player->IsInFaction(fact);
+                                            if (fact) isMet = actor->IsInFaction(fact);
                                         }
                                     }
                                     else if (reqType == "book_read") {
@@ -2378,14 +2727,14 @@ std::string GetPlayerSkillsJSON() {
                                         RE::FormID shoutID = ParseFormIDString(req.value("value", ""));
                                         if (shoutID != 0) {
                                             auto shout = RE::TESForm::LookupByID<RE::TESShout>(shoutID);
-                                            if (shout) isMet = player->HasShout(shout);
+                                            if (shout) isMet = actor->HasShout(shout);
                                         }
                                     }
                                     else isMet = true;
 
                                     req["isMet"] = isMet;
 
-                                    // [CORRE«√O AQUI] Avaliando efetivamente se tem flag de "isOr"
+                                    // [CORRE√á√ÉO AQUI] Avaliando efetivamente se tem flag de "isOr"
                                     bool isOrLink = req.value("isOr", false);
 
                                     if (isOrLink) {
@@ -2405,7 +2754,7 @@ std::string GetPlayerSkillsJSON() {
                                     }
                                 }
 
-                                // Fechamento de uma possÌvel cadeia OR n„o processada
+                                // Fechamento de uma poss√≠vel cadeia OR n√£o processada
                                 if (insideOrChainRank) {
                                     if (!currentChainResultRank) canUnlockRank = false;
                                 }
@@ -2559,6 +2908,7 @@ std::string GetPlayerSkillsJSON() {
         json availableReqs = json::array({
             //{{"id", "level"}, {"name", "Skill Level (Atual)"}},
             {{"id", "player_level"}, {"name", "Player Level"}},
+            {{"id", "actor_level"}, {"name", "Selected Actor Level"}},
             {{"id", "perk"}, {"name", "Has Perk"}, {"isForm", true}},
             {{"id", "quest_completed"}, {"name", "Quest Completed"}, {"isForm", true}}, 
             {{"id", "location_discovered"}, {"name", "Location Discovered"}, {"isForm", true}},
@@ -2588,8 +2938,29 @@ std::string GetPlayerSkillsJSON() {
         formLists["shout"] = availableShouts;
         formLists["global"] = availableGlobals;
 
+        json availableActors = json::array();
+        for (auto selectableActor : GetSelectableActors()) {
+            if (!selectableActor) continue;
+            mgr->EnsureActorProgress(selectableActor);
+            std::string selectableRace = "Unknown";
+            if (auto race = selectableActor->GetRace()) {
+                selectableRace = race->GetFullName();
+            }
+            availableActors.push_back({
+                {"id", ActorRuntimeKey(selectableActor)},
+                {"ruleKey", ActorRuleKey(selectableActor)},
+                {"name", selectableActor->GetName()},
+                {"race", selectableRace},
+                {"level", selectableActor->GetLevel()},
+                {"kind", selectableActor->IsPlayerRef() ? "player" : "follower"},
+                {"pendingLevelUps", mgr->GetPendingLevelUps(selectableActor)}
+            });
+        }
+
         json finalResponse = {
             {"player", playerData},
+            {"actors", availableActors},
+            {"selectedActorId", ActorRuntimeKey(actor)},
             {"trees", allTrees},
             {"settings", settingsData},
             {"rules", rulesData},
@@ -2607,7 +2978,7 @@ std::string GetPlayerSkillsJSON() {
 
     }
     catch (const std::exception& e) {
-        logger::error("ERRO CRÕTICO aqui o GetPlayerSkillsJSON: {}", e.what());
+        logger::error("ERRO CR√çTICO aqui o GetPlayerSkillsJSON: {}", e.what());
         return "{\"player\":null, \"trees\":[]}";
     }
 }
@@ -2629,7 +3000,7 @@ void Prisma::Install() {
 
 void Prisma::SendUpdateToUI() {
     if (!PrismaUI || !Prisma::createdView) return;
-	logger::debug("Enviando atualizaÁ„o de dados para a UI...");
+	logger::debug("Enviando atualiza√ß√£o de dados para a UI...");
     std::string jsonStr = GetPlayerSkillsJSON();
 
     // Se o json vier vazio ou sem player, enviamos mesmo assim para a UI resetar
@@ -2643,7 +3014,7 @@ void Prisma::SendUpdateToUI() {
         logger::debug("Dados atualizados enviados para a UI.");
     }
 }
-// Resgata o cÛdigo (Chamado pela UI)
+// Resgata o c√≥digo (Chamado pela UI)
 static void RedeemCodeFromUI(const char* args) {
     if (!args) return;
     try {
@@ -2688,26 +3059,86 @@ static void RedeemCodeFromUI(const char* args) {
 
 
 
-// --- ALTERADO: FunÁ„o de desbloqueio para suportar customCosts ---
+static RE::Actor* ResolveSelectableActorFromPayload(const json& payload) {
+    std::string actorIdStr = payload.value("actorId", "");
+    if (actorIdStr.empty()) return GetSelectedActor();
+
+    RE::FormID actorId = 0;
+    try {
+        actorId = static_cast<RE::FormID>(std::stoul(actorIdStr, nullptr, 16));
+    }
+    catch (...) {
+        return nullptr;
+    }
+
+    for (auto actor : GetSelectableActors()) {
+        if (actor && actor->GetFormID() == actorId) return actor;
+    }
+    return nullptr;
+}
+
+static void SelectActorFromUI(const char* args) {
+    if (!args) return;
+    try {
+        json payload = json::parse(args);
+        auto actor = ResolveSelectableActorFromPayload(payload);
+        if (!actor) return;
+        g_selectedActorID = actor->GetFormID();
+        Manager::GetSingleton()->EnsureActorProgress(actor);
+        Prisma::SendUpdateToUI();
+    }
+    catch (const std::exception& e) {
+        logger::warn("Falha ao selecionar ator: {}", e.what());
+    }
+}
+
+static bool ResolvePurchaseDefinition(
+    const std::string& perkIDStr,
+    int& cost,
+    json& customCosts)
+{
+    for (const auto& tree : GetLoadedSkillTreeConfigs()) {
+        if (!tree.contains("nodes") || !tree["nodes"].is_array()) continue;
+        for (const auto& node : tree["nodes"]) {
+            if (node.value("perk", "") == perkIDStr) {
+                cost = std::max(0, node.value("perkCost", 1));
+                customCosts = node.value("customCosts", json::array());
+                return true;
+            }
+            if (node.contains("nextRanks") && node["nextRanks"].is_array()) {
+                for (const auto& rank : node["nextRanks"]) {
+                    if (rank.value("perk", "") == perkIDStr) {
+                        cost = std::max(0, rank.value("perkCost", 1));
+                        customCosts = rank.value("customCosts", json::array());
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// Desbloqueio actor-aware com custos revalidados no backend.
 static void UnlockPerkFromUI(const char* args) {
     if (!args) return;
     try {
         json payload = json::parse(args);
         std::string perkIDStr = payload.value("id", "");
-        int cost = std::max(0, payload.value("cost", 1));
-        json customCosts = payload.value("customCosts", json::array());
+        int cost = 0;
+        json customCosts = json::array();
+        if (!ResolvePurchaseDefinition(perkIDStr, cost, customCosts)) return;
 
         RE::FormID perkID = ParseFormIDString(perkIDStr);
         if (perkID == 0) return;
 
-        auto player = RE::PlayerCharacter::GetSingleton();
-        if (!player) return;
+        auto actor = ResolveSelectableActorFromPayload(payload);
+        if (!actor) return;
+        auto mgr = Manager::GetSingleton();
 
         auto perk = RE::TESForm::LookupByID<RE::BGSPerk>(perkID);
-        if (perk) {
-            auto& playerRuntime = player->GetPlayerRuntimeData();
-
-            bool canAfford = (playerRuntime.perkCount >= cost);
+        if (perk && !ActorOwnsPerk(actor, perk)) {
+            bool canAfford = (mgr->GetActorPerkPoints(actor) >= cost);
 
             json resources = GetCustomResources();
             std::unordered_map<std::string, RE::TESGlobal*> globMap;
@@ -2736,7 +3167,7 @@ static void UnlockPerkFromUI(const char* args) {
 
                     if (!actorValueStr.empty()) {
                         RE::ActorValue av = GetActorValueFromName(actorValueStr);
-                        auto avOwner = player->AsActorValueOwner();
+                        auto avOwner = actor->AsActorValueOwner();
                         if (av != RE::ActorValue::kNone && avOwner && avOwner->GetActorValue(av) >= amt) {
                             actorValueMap[rId] = av;
                         }
@@ -2762,8 +3193,9 @@ static void UnlockPerkFromUI(const char* args) {
             }
 
             if (canAfford) {
-                player->AddPerk(perk);
-                playerRuntime.perkCount -= cost;
+                if (!mgr->SpendActorPerkPoints(actor, cost)) return;
+                actor->AddPerk(perk);
+                mgr->RecordPurchasedPerk(actor, perkID, cost);
 
                 // Desconta recursos customizados
                 for (auto& cCost : customCosts) {
@@ -2774,7 +3206,7 @@ static void UnlockPerkFromUI(const char* args) {
                         globMap[rId]->value -= amt;
                     }
                     else if (actorValueMap.count(rId)) {
-                        player->AsActorValueOwner()->ModBaseActorValue(actorValueMap[rId], -amt);
+                        actor->AsActorValueOwner()->ModBaseActorValue(actorValueMap[rId], -amt);
                     }
                 }
 
@@ -2783,13 +3215,18 @@ static void UnlockPerkFromUI(const char* args) {
                     SKSE::ModCallbackEvent modEvent{
                         RE::BSFixedString("NSM_PerkAquired"),
                         RE::BSFixedString(perkIDStr), // Passa a string do FormID (ex: Skyrim.esm|1234)
-                        static_cast<float>(perkID),   // Passa o ID NumÈrico bruto no float como bÙnus
-                        nullptr
+                        static_cast<float>(perkID),   // Passa o ID Num√©rico bruto no float como b√¥nus
+                        actor
                     };
                     dispatcher->SendEvent(&modEvent);
                     logger::debug("Evento NSM_PerkAquired disparado para o perk: {}", perkIDStr);
                 }
-                logger::info("Perk {} desbloqueado com sucesso! Custo de Perks: {}", perkIDStr, cost);
+                logger::info(
+                    "Perk {} desbloqueado para {} ({:08X}). Custo: {}",
+                    perkIDStr,
+                    actor->GetName(),
+                    actor->GetFormID(),
+                    cost);
                 Prisma::SendUpdateToUI();
             }
             else {
@@ -2804,7 +3241,7 @@ static void UnlockPerkFromUI(const char* args) {
 
 
 
-// FunÁ„o para lidar com o Level Up (Escolha de Atributo)
+// Fun√ß√£o para lidar com o Level Up (Escolha de Atributo)
 static void ChooseAttributeFromUI(const char* args) {
     if (!args) return;
     try {
@@ -2812,33 +3249,63 @@ static void ChooseAttributeFromUI(const char* args) {
         json levelUpsArray = payload.value("levelUps", json::array());
         json skillsMap = payload.value("skills", json::object());
 
-        auto player = RE::PlayerCharacter::GetSingleton();
-        if (!player) return;
+        auto actor = ResolveSelectableActorFromPayload(payload);
+        if (!actor) return;
+        auto mgr = Manager::GetSingleton();
+        const int requestedLevelUps = static_cast<int>(levelUpsArray.size());
+        const int pendingBefore = mgr->GetPendingLevelUps(actor);
+        if (requestedLevelUps <= 0 || requestedLevelUps > pendingBefore) return;
+
+        const int firstRewardLevel = actor->IsPlayerRef() ?
+            static_cast<int>(actor->GetLevel()) + 1 :
+            std::max(1, static_cast<int>(actor->GetLevel()) - pendingBefore + 1);
+        int allowedSkillPoints = 0;
+        int allowedSpend = 0;
+        for (int i = 0; i < requestedLevelUps; ++i) {
+            auto effective = GetEffectiveSettings(firstRewardLevel + i, actor);
+            allowedSkillPoints += std::max(0, effective.value("skillPointsPerLevel", 0));
+            allowedSpend += std::max(0, effective.value("maxSkillPointsSpendablePerLevel", 0));
+        }
+
+        int requestedSkillPoints = 0;
+        for (auto& [skillName, amountVal] : skillsMap.items()) {
+            if (!amountVal.is_number_integer()) return;
+            const int amount = amountVal.get<int>();
+            if (amount < 0) return;
+            requestedSkillPoints += amount;
+        }
+        if (requestedSkillPoints > std::min(allowedSkillPoints, allowedSpend)) return;
 
         int totalExtraPerks = 0;
-        logger::info("[Prisma] Processando {} level ups em lote.", levelUpsArray.size());
+        logger::info(
+            "[Prisma] Processando {} level ups para {} ({:08X}).",
+            levelUpsArray.size(),
+            actor->GetName(),
+            actor->GetFormID());
 
-        // 1. Processa Atributos para cada nÌvel pendente escolhido
+        // 1. Processa Atributos para cada n√≠vel pendente escolhido
+        int levelIndex = 0;
         for (auto& lvlUp : levelUpsArray) {
-            int lvl = lvlUp.value("level", 0);
+            int lvl = firstRewardLevel + levelIndex++;
             std::string attribute = lvlUp.value("attribute", "");
-            auto playerBase = player->GetActorBase();
-            if (playerBase) {
+            if (attribute != "Health" && attribute != "Magicka" && attribute != "Stamina") return;
+            auto playerBase = actor->GetActorBase();
+            if (actor->IsPlayerRef() && playerBase) {
                 playerBase->actorData.level += 1;
                 playerBase->AddChange(RE::TESNPC::ChangeFlags::kBaseData);
                 logger::info("Player subiu de nivel! Novo nivel: {}", playerBase->actorData.level);
             }
-            // Pega as configuraÁıes EFETIVAS baseadas na regra daquele respectivo nÌvel
-            json effSettings = GetEffectiveSettings(lvl);
+            // Pega as configura√ß√µes EFETIVAS baseadas na regra daquele respectivo n√≠vel
+            json effSettings = GetEffectiveSettings(lvl, actor);
             float healthInc = effSettings.value("healthIncrease", 10.0f);
             float magickaInc = effSettings.value("magickaIncrease", 10.0f);
             float staminaInc = effSettings.value("staminaIncrease", 10.0f);
             int perksPerLevel = effSettings.value("perksPerLevel", 1);
             bool refillAttributes = effSettings.value("refillAttributesOnLevelUp", false);
 
-            if (attribute == "Health") player->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kHealth, healthInc);
-            else if (attribute == "Magicka") player->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kMagicka, magickaInc);
-            else if (attribute == "Stamina") player->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kStamina, staminaInc);
+            if (attribute == "Health") actor->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kHealth, healthInc);
+            else if (attribute == "Magicka") actor->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kMagicka, magickaInc);
+            else if (attribute == "Stamina") actor->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kStamina, staminaInc);
 
             float cwInc = effSettings.value("carryWeightIncrease", 0.0f);
             std::string cwMethod = effSettings.value("carryWeightMethod", "none");
@@ -2858,14 +3325,14 @@ static void ChooseAttributeFromUI(const char* args) {
             }
 
             if (giveCW && cwInc > 0.0f) {
-                player->AsActorValueOwner()->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kPermanent, RE::ActorValue::kCarryWeight, cwInc);
+                actor->AsActorValueOwner()->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kPermanent, RE::ActorValue::kCarryWeight, cwInc);
                 logger::info("Carry Weight incrementado em {} para o Nivel {}", cwInc, lvl);
             }
 
             if (refillAttributes) {
-                player->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kHealth, 999999.0f);
-                player->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kMagicka, 999999.0f);
-                player->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kStamina, 999999.0f);
+                actor->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kHealth, 999999.0f);
+                actor->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kMagicka, 999999.0f);
+                actor->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kStamina, 999999.0f);
             }
 
             totalExtraPerks += perksPerLevel;
@@ -2877,37 +3344,30 @@ static void ChooseAttributeFromUI(const char* args) {
             if (amount > 0) {
                 RE::ActorValue av = GetActorValueFromName(skillName);
                 if (av != RE::ActorValue::kNone) {
-                    player->AsActorValueOwner()->ModBaseActorValue(av, static_cast<float>(amount));
+                    actor->AsActorValueOwner()->ModBaseActorValue(av, static_cast<float>(amount));
                 }
                 else {
-                    auto mgr = Manager::GetSingleton();
-                    int currentCustomLevel = mgr->GetCustomSkillLevel(player, skillName);
-                    mgr->SetCustomSkillLevel(player, skillName, currentCustomLevel + amount);
+                    int currentCustomLevel = mgr->GetCustomSkillLevel(actor, skillName);
+                    mgr->SetCustomSkillLevel(actor, skillName, currentCustomLevel + amount);
                 }
             }
         }
 
-        // 3. Compensa os Perk Points finais (soma/subtrai as regras efetivas dos nÌveis agrupados)
-        if (totalExtraPerks != 0) {
-            int currentPerks = static_cast<int>(player->GetPlayerRuntimeData().perkCount);
-            int newPerkCount = currentPerks + totalExtraPerks;
+        // 3. Compensa os Perk Points finais (soma/subtrai as regras efetivas dos n√≠veis agrupados)
+        if (totalExtraPerks != 0) mgr->ModActorPerkPoints(actor, totalExtraPerks);
 
-            // Trava o valor entre 0 e 255 para evitar underflow/overflow da engine do Skyrim
-            newPerkCount = std::clamp(newPerkCount, 0, 255);
-            player->GetPlayerRuntimeData().perkCount = static_cast<uint8_t>(newPerkCount);
-        }
-
-        // Limpa as pendÍncias j· processadas
-        g_pendingLevelUps -= levelUpsArray.size();
-        if (g_pendingLevelUps < 0) g_pendingLevelUps = 0;
+        // Limpa as pend√™ncias j√° processadas
+        mgr->ConsumePendingLevelUps(actor, requestedLevelUps);
 
         auto msgQueue = RE::UIMessageQueue::GetSingleton();
-        if (msgQueue) {
+        if (actor->IsPlayerRef() && msgQueue) {
             msgQueue->AddMessage(RE::LevelUpMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
         }
 
         Prisma::SendUpdateToUI();
-        logger::info("[Prisma] Level Up Batch processado com sucesso. Restam {} level ups pendentes.", g_pendingLevelUps);
+        logger::info(
+            "[Prisma] Level Up processado. Restam {} pend√™ncias para o ator.",
+            mgr->GetPendingLevelUps(actor));
     }
     catch (const std::exception& e) {
         logger::error("Erro ao aplicar level up em lote: {}", e.what());
@@ -2926,7 +3386,7 @@ static void SaveSettingsFromUI(const char* jsonArgs) {
     }
 }
 
-// FunÁ„o para receber o JSON da UI, limpar os dados do jogador e salvar nos arquivos
+// Fun√ß√£o para receber o JSON da UI, limpar os dados do jogador e salvar nos arquivos
 static void SaveSkillTreesFromUI(const char* jsonArgs) {
     if (!jsonArgs) return;
 
@@ -2974,7 +3434,7 @@ static void SaveSkillTreesFromUI(const char* jsonArgs) {
                 // Atualiza o cache de imediato usando o novo estado que acabou de ser salvo
                 std::error_code ec;
                 auto writeTime = std::filesystem::last_write_time(filePath, ec);
-                tree["_originalFilePath"] = filePath; // Devolve o path para garantir coerÍncia no cache
+                tree["_originalFilePath"] = filePath; // Devolve o path para garantir coer√™ncia no cache
                 g_treeCache[filePath] = { tree, writeTime };
 
                 logger::info("Skill tree '{}' atualizada e salva com sucesso em {}", treeName, filePath);
@@ -2990,15 +3450,17 @@ static void SaveSkillTreesFromUI(const char* jsonArgs) {
 }
 
 // =========================================================================================
-// HELPER: REMOVER PERKS DE UMA ¡RVORE E CALCULAR REEMBOLSO
+// HELPER: REMOVER PERKS DE UMA √ÅRVORE E CALCULAR REEMBOLSO
 // =========================================================================================
-int RemovePerksFromTree(const json& treeData, RE::PlayerCharacter* player) {
+int RemovePerksFromTree(const json& treeData, RE::Actor* actor) {
     int pointsRefunded = 0;
+    if (!actor) return 0;
+    auto mgr = Manager::GetSingleton();
 
     if (!treeData.contains("nodes") || !treeData["nodes"].is_array()) return 0;
 
     for (const auto& node : treeData["nodes"]) {
-        // 1. Verifica e remove Ranks Superiores primeiro (de tr·s para frente)
+        // 1. Verifica e remove Ranks Superiores primeiro (de tr√°s para frente)
         if (node.contains("nextRanks") && node["nextRanks"].is_array()) {
             const auto& ranks = node["nextRanks"];
             // Itera reverso para remover do maior rank para o menor
@@ -3009,10 +3471,12 @@ int RemovePerksFromTree(const json& treeData, RE::PlayerCharacter* player) {
                 RE::FormID rankID = ParseFormIDString(rankIDStr);
                 if (rankID != 0) {
                     auto perk = RE::TESForm::LookupByID<RE::BGSPerk>(rankID);
-                    if (perk && player->HasPerk(perk)) {
+                    if (perk && actor->HasPerk(perk)) {
+                        auto paidCost = mgr->RemovePurchasedPerkRecord(actor, rankID);
+                        if (!paidCost && !actor->IsPlayerRef()) continue;
                         logger::debug("[RemovePerks] Removendo Rank Perk: {:08X} ({})", rankID, rankIDStr);
-                        player->RemovePerk(perk);
-                        pointsRefunded += cost;
+                        actor->RemovePerk(perk);
+                        pointsRefunded += paidCost.value_or(cost);
                     }
                 }
             }
@@ -3025,10 +3489,12 @@ int RemovePerksFromTree(const json& treeData, RE::PlayerCharacter* player) {
 
         if (baseID != 0) {
             auto perk = RE::TESForm::LookupByID<RE::BGSPerk>(baseID);
-            if (perk && player->HasPerk(perk)) {
+            if (perk && actor->HasPerk(perk)) {
+                auto paidCost = mgr->RemovePurchasedPerkRecord(actor, baseID);
+                if (!paidCost && !actor->IsPlayerRef()) continue;
                 logger::debug("[RemovePerks] Removendo Base Perk: {:08X} ({})", baseID, baseIDStr);
-                player->RemovePerk(perk);
-                pointsRefunded += baseCost;
+                actor->RemovePerk(perk);
+                pointsRefunded += paidCost.value_or(baseCost);
             }
         }
     }
@@ -3044,12 +3510,12 @@ static void LegendarySkillFromUI(const char* args) {
         json payload = json::parse(args);
         std::string treeName = payload.value("treeName", "");
 
-        auto player = RE::PlayerCharacter::GetSingleton();
-        if (!player) return;
+        auto actor = ResolveSelectableActorFromPayload(payload);
+        if (!actor) return;
 
         logger::debug("[Legendary] Iniciando reset lendario para a arvore: {}", treeName);
 
-        // Carrega a configuraÁ„o da ·rvore especÌfica
+        // Carrega a configura√ß√£o da √°rvore espec√≠fica
         json allTrees = GetLoadedSkillTreeConfigs();
         json targetTree;
         bool found = false;
@@ -3068,14 +3534,11 @@ static void LegendarySkillFromUI(const char* args) {
         }
 
         // 1. Remover Perks e Calcular Pontos
-        int refunded = RemovePerksFromTree(targetTree, player);
+        int refunded = RemovePerksFromTree(targetTree, actor);
 
         // 2. Devolver Pontos
         if (refunded > 0) {
-            // Cast seguro para evitar overflow se o count for uint8_t
-            int currentPoints = static_cast<int>(player->GetPlayerRuntimeData().perkCount);
-            int newTotal = currentPoints + refunded;
-            player->GetPlayerRuntimeData().perkCount = static_cast<uint8_t>(std::min(newTotal, 255));
+            Manager::GetSingleton()->ModActorPerkPoints(actor, refunded);
 
             logger::info("[Legendary] Skill '{}': {} pontos devolvidos.", treeName, refunded);
         }
@@ -3083,7 +3546,7 @@ static void LegendarySkillFromUI(const char* args) {
             logger::debug("[Legendary] Skill '{}' nao teve perks a reembolsar.", treeName);
         }
 
-        // 3. Resetar NÌvel da Skill
+        // 3. Resetar N√≠vel da Skill
         int initialLevel = targetTree.value("initialLevel", 15);
         bool isVanilla = targetTree.value("isVanilla", false);
 
@@ -3091,14 +3554,14 @@ static void LegendarySkillFromUI(const char* args) {
             RE::ActorValue av = GetActorValueFromName(treeName);
             if (av != RE::ActorValue::kNone) {
                 // Define o valor base para o inicial
-                player->AsActorValueOwner()->SetBaseActorValue(av, static_cast<float>(initialLevel));
+                actor->AsActorValueOwner()->SetBaseActorValue(av, static_cast<float>(initialLevel));
                 logger::debug("[Legendary] Nivel da skill vanilla {} resetado para {}", treeName, initialLevel);
             }
         }
         else {
             auto mgr = Manager::GetSingleton();
-            mgr->SetCustomSkillLevel(player, treeName, initialLevel);
-            mgr->SetCustomSkillXP(player, treeName, 0.0f);
+            mgr->SetCustomSkillLevel(actor, treeName, initialLevel);
+            mgr->SetCustomSkillXP(actor, treeName, 0.0f);
             logger::debug("[Legendary] Nivel da custom skill {} resetado para {}", treeName, initialLevel);
         }
 
@@ -3118,10 +3581,11 @@ static void LegendarySkillFromUI(const char* args) {
 // =========================================================================================
 // CALLBACK: RESET ALL PERKS (Apenas Perks, mantem niveis)
 // =========================================================================================
-static void ResetAllPerksFromUI(const char*) {
+static void ResetAllPerksFromUI(const char* args) {
     try {
-        auto player = RE::PlayerCharacter::GetSingleton();
-        if (!player) return;
+        json payload = args && *args ? json::parse(args) : json::object();
+        auto actor = ResolveSelectableActorFromPayload(payload);
+        if (!actor) return;
 
         logger::debug("[ResetAll] Iniciando remocao de TODOS os perks...");
 
@@ -3129,7 +3593,7 @@ static void ResetAllPerksFromUI(const char*) {
         int totalRefunded = 0;
 
         for (const auto& tree : allTrees) {
-            int refunded = RemovePerksFromTree(tree, player);
+            int refunded = RemovePerksFromTree(tree, actor);
             if (refunded > 0) {
                 logger::debug("[ResetAll] {} pontos reembolsados da arvore '{}'.", refunded, tree.value("name", "Unknown"));
             }
@@ -3137,9 +3601,7 @@ static void ResetAllPerksFromUI(const char*) {
         }
 
         if (totalRefunded > 0) {
-            int currentPoints = static_cast<int>(player->GetPlayerRuntimeData().perkCount);
-            int newTotal = currentPoints + totalRefunded;
-            player->GetPlayerRuntimeData().perkCount = static_cast<uint8_t>(std::min(newTotal, 255));
+            Manager::GetSingleton()->ModActorPerkPoints(actor, totalRefunded);
 
             logger::info("[ResetAll] {} pontos totais devolvidos ao jogador.", totalRefunded);
         }
@@ -3183,17 +3645,17 @@ void Prisma::Show() {
         view = PrismaUI->CreateView(path, [](PrismaView currentView) -> void {
             logger::debug("DOM Pronto. Configurando interface...");
             PrismaUI->RegisterJSListener(currentView, "toggleInspector", [](const char*) {
-                // 1. Se ainda n„o foi criado, cria o Inspector View
+                // 1. Se ainda n√£o foi criado, cria o Inspector View
                 if (!hasInspectorInitialized) {
 
-                    // CORRE«√O: Removemos o callback. A funÁ„o sÛ aceita a 'view'.
+                    // CORRE√á√ÉO: Removemos o callback. A fun√ß√£o s√≥ aceita a 'view'.
                     PrismaUI->CreateInspectorView(view);
 
                     logger::info("Inspector View criado.");
 
-                    // Executamos a configuraÁ„o de limites imediatamente apÛs criar
+                    // Executamos a configura√ß√£o de limites imediatamente ap√≥s criar
                     // Nota: Verifique se sua API espera Pixels ou Porcentagem.
-                    // O cabeÁalho pede 'unsigned int' para largura/altura, o que geralmente indica Pixels.
+                    // O cabe√ßalho pede 'unsigned int' para largura/altura, o que geralmente indica Pixels.
                     // Se a janela ficar muito pequena, mude 50/100 para valores de pixel (ex: 960, 1080).
                     PrismaUI->SetInspectorBounds(view, 50, 0, 800, 800);
 
@@ -3202,7 +3664,7 @@ void Prisma::Show() {
 
                 // 2. Alterna a visibilidade
                 isInspectorVisible = !isInspectorVisible;
-                // A funÁ„o da API para visibilidade È SetInspectorVisibility(view, bool)
+                // A fun√ß√£o da API para visibilidade √© SetInspectorVisibility(view, bool)
                 PrismaUI->SetInspectorVisibility(view, isInspectorVisible);
 
                 logger::debug("Inspector visibility set to: {}", isInspectorVisible);
@@ -3221,6 +3683,7 @@ void Prisma::Show() {
                 });
             PrismaUI->RegisterJSListener(currentView, "legendarySkill", [](const char* args) { LegendarySkillFromUI(args); });
             PrismaUI->RegisterJSListener(currentView, "resetAllPerks", [](const char* args) { ResetAllPerksFromUI(args); });
+            PrismaUI->RegisterJSListener(currentView, "selectActor", [](const char* args) { SelectActorFromUI(args); });
             PrismaUI->RegisterJSListener(currentView, "requestSkills", [](const char*) {
                 logger::debug("[DEBUG] Chamando SendUpdateToUI via JSListener (requestSkills)");
                 SendUpdateToUI();
@@ -3264,13 +3727,13 @@ void Prisma::Show() {
                     file << newTree.dump(4);
                     file.close();
 
-                    // ForÁa o C++ a reler a pasta e enviar pro UI
+                    // For√ßa o C++ a reler a pasta e enviar pro UI
                     Manager::GetSingleton()->LoadCustomSkills();
                     logger::debug("[DEBUG] Chamando SendUpdateToUI via JSListener (createTree)");
                     SendUpdateToUI();
                 }
                 catch (const std::exception& e) {
-                    logger::error("Erro ao criar nova ·rvore: {}", e.what());
+                    logger::error("Erro ao criar nova √°rvore: {}", e.what());
                 }
                 });
             PrismaUI->RegisterJSListener(currentView, "deleteTree", [](const char* args) {
@@ -3369,13 +3832,13 @@ void Prisma::Show() {
 
 void Prisma::TriggerExitAnimation() {
     if (PrismaUI && createdView && isVisible) {
-        // Envia um evento para o frontend React executar a animaÁ„o de saÌda
+        // Envia um evento para o frontend React executar a anima√ß√£o de sa√≠da
         PrismaUI->Invoke(view, "window.dispatchEvent(new CustomEvent('triggerExitAnimation'));");
     }
 }
 
 void Prisma::TriggerBack() {
-    // Usamos as vari·veis internas do seu Prisma.cpp para ter certeza que a view È v·lida
+    // Usamos as vari√°veis internas do seu Prisma.cpp para ter certeza que a view √© v√°lida
     if (PrismaUI && createdView && isVisible) {
         PrismaUI->Invoke(view, "window.dispatchEvent(new CustomEvent('HardwareBack'));");
     }
@@ -3424,19 +3887,19 @@ void ApplyVanillaInitialLevels() {
 
     logger::info("Aplicando Niveis Iniciais para Skills Vanilla (New Game)...");
 
-    // Carrega todas as configuraÁıes de ·rvores (Vanilla e Custom)
+    // Carrega todas as configura√ß√µes de √°rvores (Vanilla e Custom)
     json allTrees = GetLoadedSkillTreeConfigs();
 
     for (const auto& tree : allTrees) {
-        // Verifica se È Vanilla
+        // Verifica se √© Vanilla
         if (tree.value("isVanilla", false)) {
             std::string name = tree.value("name", "");
-            // Pega o initialLevel do JSON (Padr„o 15 se n„o existir)
+            // Pega o initialLevel do JSON (Padr√£o 15 se n√£o existir)
             int initialLevel = tree.value("initialLevel", 15);
 
             RE::ActorValue av = GetActorValueFromName(name);
             if (av != RE::ActorValue::kNone) {
-                // Define o valor base do ActorValue para o nÌvel configurado
+                // Define o valor base do ActorValue para o n√≠vel configurado
                 player->AsActorValueOwner()->SetBaseActorValue(av, static_cast<float>(initialLevel));
                 logger::info("Skill Vanilla '{}' definida para o nivel inicial: {}", name, initialLevel);
             }

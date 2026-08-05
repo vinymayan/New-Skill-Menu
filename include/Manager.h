@@ -50,6 +50,14 @@ struct CustomSkillState {
     int bonusLevel = 0;
 };
 
+struct ActorProgressState {
+    int perkPoints = 0;
+    int lastObservedLevel = 0;
+    int highestRewardedLevel = 0;
+    int pendingLevelUps = 0;
+    std::map<RE::FormID, int> purchasedPerks;
+};
+
 class Manager {
 public:
     static Manager* GetSingleton() {
@@ -89,6 +97,17 @@ public:
     bool HasCustomPerk(RE::Actor* actor, const std::string& perkId);
     bool AddCustomPerk(RE::Actor* actor, const std::string& perkId);
     bool RemoveCustomPerk(RE::Actor* actor, const std::string& perkId);
+    RE::Actor* ResolveActor(RE::FormID actorFormID) const;
+    ActorProgressState& EnsureActorProgress(RE::Actor* actor);
+    int GetActorPerkPoints(RE::Actor* actor);
+    bool SpendActorPerkPoints(RE::Actor* actor, int amount);
+    void ModActorPerkPoints(RE::Actor* actor, int amount);
+    int GetPendingLevelUps(RE::Actor* actor);
+    void QueuePendingLevelUps(RE::Actor* actor, int amount);
+    void ConsumePendingLevelUps(RE::Actor* actor, int amount);
+    void RecordPurchasedPerk(RE::Actor* actor, RE::FormID perkFormID, int perkPointCost);
+    std::optional<int> RemovePurchasedPerkRecord(RE::Actor* actor, RE::FormID perkFormID);
+    bool WasPerkPurchasedForActor(RE::Actor* actor, RE::FormID perkFormID) const;
     void RemoveCustomSkillState(const std::string& skillId);
     float GetRequiredXP(const std::string& skillId, int level);
 
@@ -101,6 +120,7 @@ public:
     std::map<std::string, CustomSkill> customSkillsData;
     std::map<std::string, CustomSkillState> playerCustomSkills;
     std::map<RE::FormID, std::map<std::string, float>> actorCustomSkillXP;
+    std::map<RE::FormID, ActorProgressState> actorProgressStates;
 
     const InternalFormInfo* GetInfoByID(const std::string& type, RE::FormID id);
     bool _isPopulated = false;

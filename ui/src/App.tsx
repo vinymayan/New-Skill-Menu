@@ -85,6 +85,9 @@ interface SkillTreeData {
     isHidden?: boolean;
 }
 interface PlayerData {
+    id: string;
+    ruleKey?: string;
+    kind?: 'player' | 'follower';
     name: string;
     health: { current: number; max: number };
     magicka: { current: number; max: number };
@@ -99,8 +102,20 @@ interface PlayerData {
     isLevelUpMenuOpen?: boolean;
     resourceValues?: Record<string, number>;
 }
+interface ActorSummary {
+    id: string;
+    ruleKey: string;
+    name: string;
+    race: string;
+    level: number;
+    kind: 'player' | 'follower';
+    pendingLevelUps?: number;
+}
 interface LevelRule {
     level: number;
+    scope?: 'all' | 'player' | 'followers' | 'actor';
+    actorKey?: string;
+    actorName?: string;
     perksPerLevel?: number;
     healthIncrease?: number;
     staminaIncrease?: number;
@@ -375,14 +390,25 @@ const FileBrowserModal = ({ field, initialPath, onClose, onSelect }: { field: st
     );
 };
 
-function getEffectiveSettings(settings: SettingsData, rules: LevelRule[], targetLevel: number) {
+function getEffectiveSettings(settings: SettingsData, rules: LevelRule[], targetLevel: number, actor: PlayerData) {
     let eff = { ...settings.base };
 
     const hardCap = settings.base.skillCap || 100;
 
     if (!rules || rules.length === 0) return eff;
 
-    const sortedRules = [...rules].sort((a, b) => a.level - b.level);
+    const matchingRules = rules.filter(rule => {
+        const scope = rule.scope || 'player';
+        if (scope === 'all') return true;
+        if (scope === 'player') return actor.kind === 'player';
+        if (scope === 'followers') return actor.kind === 'follower';
+        return scope === 'actor' && rule.actorKey === actor.ruleKey;
+    });
+    const specificity = (rule: LevelRule) =>
+        rule.scope === 'actor' ? 30 :
+            rule.scope === 'all' ? 10 : 20;
+    const sortedRules = matchingRules.sort((a, b) =>
+        specificity(a) - specificity(b) || a.level - b.level);
     for (const rule of sortedRules) {
         if (rule.level <= targetLevel) {
             if (rule.perksPerLevel !== undefined) eff.perksPerLevel = rule.perksPerLevel;
@@ -988,7 +1014,12 @@ const InlineSVGIcon = memo(({ src, className, alt }: { src: string, className?: 
     );
 });
 
-const PlayerHeader = ({ player, customResources }: { player: PlayerData, customResources?: CustomResource[] }) => {
+const PlayerHeader = ({ player, actors, customResources, onActorSelect }: {
+    player: PlayerData,
+    actors: ActorSummary[],
+    customResources?: CustomResource[],
+    onActorSelect: (actorId: string) => void
+}) => {
     const [showResources, setShowResources] = useState(false);
     return (
         <div className="skyrim-header">
@@ -996,7 +1027,16 @@ const PlayerHeader = ({ player, customResources }: { player: PlayerData, customR
                 <DiamondSeparator />
                 <div className="header-item">
                     <span className="header-label">{t('header.name')}</span>
-                    <span className="header-value">{player.name}</span>
+                    <CustomSelect
+                        options={actors.map(actor => ({
+                            value: actor.id,
+                            label: `${actor.name}${(actor.pendingLevelUps || 0) > 0 ? ` (+${actor.pendingLevelUps})` : ''}`
+                        }))}
+                        value={player.id}
+                        onChange={(value) => onActorSelect(String(value))}
+                        width="210px"
+                        disableSearch={actors.length < 6}
+                    />
                 </div>
 
                 <div className="header-item header-level-item">
@@ -1028,7 +1068,7 @@ const PlayerHeader = ({ player, customResources }: { player: PlayerData, customR
                             </div>
                             {customResources && customResources.map(res => (
                                 <div key={res.id} className="resource-item">
-                                    <span>{resolveText(res.name, false)}</span>
+                                    <span>{resolveText(res.name, false)}{res.glob ? ' (Shared)' : ''}</span>
                                     <span>{player.resourceValues?.[res.id] || 0}</span>
                                 </div>
                             ))}
@@ -1036,10 +1076,12 @@ const PlayerHeader = ({ player, customResources }: { player: PlayerData, customR
                     )}
                 </div>
 
-                <div className="header-item">
-                    <span className="header-label">{t('header.dragon_souls')}</span>
-                    <span className="header-value">{player.dragonSouls || 0}</span>
-                </div>
+                {player.kind === 'player' && (
+                    <div className="header-item">
+                        <span className="header-label">{t('header.dragon_souls')}</span>
+                        <span className="header-value">{player.dragonSouls || 0}</span>
+                    </div>
+                )}
                 <DiamondSeparator />
             </div>
 
@@ -1471,8 +1513,9 @@ const TreeVisualNodes = memo(({ treeData, isPreview, isEditorMode,
     );
 });
 
-const SettingsModal = ({ settings, rules, customResources, formLists, onClose, onSaveSettings, onSaveRules, onSaveResources, onDeleteResource, onResetAllPerks }: {
+const SettingsModal = ({ settings, rules, selectedActor, customResources, formLists, onClose, onSaveSettings, onSaveRules, onSaveResources, onDeleteResource, onResetAllPerks }: {
     settings: SettingsData, rules: LevelRule[], customResources: CustomResource[], formLists: Record<string, AvailablePerk[]>, onClose: () => void,
+    selectedActor: PlayerData | null,
     onSaveSettings: (s: SettingsData) => void, onSaveRules: (r: LevelRule[]) => void, onSaveResources: (res: CustomResource[]) => void, onDeleteResource: (id: string) => void, onResetAllPerks: () => void
 }) => {
     const [settingsData, setSettingsData] = useState<SettingsData>(JSON.parse(JSON.stringify(settings)));
@@ -1493,7 +1536,7 @@ const SettingsModal = ({ settings, rules, customResources, formLists, onClose, o
         }));
     };
 
-    const addRule = () => setRulesData(prev => [...prev, { level: 2 }]);
+    const addRule = () => setRulesData(prev => [...prev, { level: 2, scope: 'player' }]);
     const removeRule = (index: number) => setRulesData(prev => prev.filter((_, i) => i !== index));
     const handleRuleChange = (index: number, field: keyof LevelRule, value: any) => {
         setRulesData(prev => {
@@ -1507,6 +1550,20 @@ const SettingsModal = ({ settings, rules, customResources, formLists, onClose, o
                 };
             }
             return newRules;
+        });
+    };
+    const handleRuleScopeChange = (index: number, scope: LevelRule['scope']) => {
+        setRulesData(prev => {
+            const next = [...prev];
+            next[index] = { ...next[index], scope };
+            if (scope === 'actor' && selectedActor) {
+                next[index].actorKey = selectedActor.ruleKey;
+                next[index].actorName = selectedActor.name;
+            } else {
+                delete next[index].actorKey;
+                delete next[index].actorName;
+            }
+            return next;
         });
     };
 
@@ -1672,6 +1729,25 @@ const SettingsModal = ({ settings, rules, customResources, formLists, onClose, o
                                         <button className="delete-btn" onClick={() => removeRule(idx)}>{t('common.delete')}</button>
                                     </div>
                                     <div className="settings-grid compact-grid">
+                                        <label>Scope
+                                            <CustomSelect
+                                                options={[
+                                                    { value: 'all', label: 'All Actors' },
+                                                    { value: 'player', label: 'Player' },
+                                                    { value: 'followers', label: 'All Followers' },
+                                                    { value: 'actor', label: `Selected: ${selectedActor?.name || 'Unavailable'}` }
+                                                ]}
+                                                value={rule.scope || 'player'}
+                                                onChange={(value) => handleRuleScopeChange(idx, value)}
+                                                width="100%"
+                                                disableSearch={true}
+                                            />
+                                        </label>
+                                        {rule.scope === 'actor' && (
+                                            <label>Specific actor
+                                                <input value={rule.actorName || selectedActor?.name || ''} disabled />
+                                            </label>
+                                        )}
                                         <label>{t('settings.rules.skill_cap')} <input type="number" placeholder={t('common.base')} value={rule.skillCap ?? ''} onChange={e => handleRuleChange(idx, 'skillCap', e.target.value)} style={{ borderColor: '#ffd700' }} /></label>
                                         <label className="checkbox-label" style={{ gridColumn: 'span 2', marginTop: '10px' }}>
                                             <input type="checkbox" checked={rule.useDynamicSkillCap !== false} onChange={e => handleRuleChange(idx, 'useDynamicSkillCap', e.target.checked)} />
@@ -2818,9 +2894,10 @@ const BottomSkillGrid = ({ trees, uiSettings, onHoverSkill, onClickSkill, onCont
     );
 };
 
-const LevelUpModal = ({ trees, settings, rules, currentLevel, pendingLevelUps, onSelect }: {
+const LevelUpModal = ({ trees, settings, rules, actor, currentLevel, pendingLevelUps, onSelect }: {
     trees: SkillTreeData[], settings: SettingsData,
     rules: LevelRule[],
+    actor: PlayerData,
     currentLevel: number, pendingLevelUps: number, onSelect: (payload: any) => void
 }) => {
     const [allocations, setAllocations] = useState<Record<string, number>>({});
@@ -2837,18 +2914,20 @@ const LevelUpModal = ({ trees, settings, rules, currentLevel, pendingLevelUps, o
         let maxSpend = 0;
         let maxCap = 100;
 
-        const startLevel = currentLevel + 1;
-        const endLevel = currentLevel + pendingLevelUps;
+        const startLevel = actor.kind === 'follower' ?
+            Math.max(1, currentLevel - pendingLevelUps + 1) :
+            currentLevel + 1;
+        const endLevel = startLevel + pendingLevelUps - 1;
 
         for (let l = startLevel; l <= endLevel; l++) {
-            const eff = getEffectiveSettings(settings, rules, l);
+            const eff = getEffectiveSettings(settings, rules, l, actor);
             processList.push({ level: l, eff });
             skillPts += eff.skillPointsPerLevel || 0;
             maxSpend += eff.maxSkillPointsSpendablePerLevel || 0;
             if ((eff.skillCap || 100) > maxCap) maxCap = eff.skillCap || 100;
         }
 
-        const currentEff = getEffectiveSettings(settings, rules, currentLevel);
+        const currentEff = getEffectiveSettings(settings, rules, currentLevel, actor);
 
         return {
             levelsToProcess: processList,
@@ -2856,7 +2935,7 @@ const LevelUpModal = ({ trees, settings, rules, currentLevel, pendingLevelUps, o
             totalMaxSpendable: maxSpend,
             currentCapEffective: currentEff
         };
-    }, [currentLevel, pendingLevelUps, settings, rules]);
+    }, [currentLevel, pendingLevelUps, settings, rules, actor]);
 
     const totalSpent = Object.values(allocations).reduce((a, b) => a + b, 0);
     const maxAllowed = Math.min(totalSkillPoints, totalMaxSpendable);
@@ -3445,6 +3524,7 @@ const AlertModal = ({ title, message, onClose }: { title: string, message: strin
 // --- Main App ---
 function App() {
     const [playerData, setPlayerData] = useState<PlayerData | null>(null);
+    const [actors, setActors] = useState<ActorSummary[]>([]);
     const [skillTrees, setSkillTrees] = useState<SkillTreeData[]>([]);
     const [availableReqs, setAvailableReqs] = useState<RequirementDef[]>([]);
     const [browserField, setBrowserField] = useState<string | null>(null);
@@ -3752,6 +3832,7 @@ function App() {
             if (!data || !data.player) {
                 console.warn("[PrismaUI] Dados inválidos recebidos.");
                 setPlayerData(null);
+                setActors([]);
                 setSkillTrees([]);
                 setIsLoaded(false);
                 return;
@@ -3780,6 +3861,7 @@ function App() {
                 setIsExiting(false);
 
                 setPlayerData(data.player);
+                setActors(data.actors || []);
                 setSkillTrees(data.trees);
 
                 const pathsToLoad = new Set<string>();
@@ -3861,24 +3943,35 @@ function App() {
         }));
     }, []);
 
+    const handleActorSelect = useCallback((actorId: string) => {
+        if (!actorId || actorId === playerData?.id) return;
+        setConfirmingPerk(null);
+        setConfirmAction(null);
+        setSelectedSkill(null);
+        setIsLoaded(false);
+        if (typeof (window as any).selectActor === 'function') {
+            (window as any).selectActor(JSON.stringify({ actorId }));
+        }
+    }, [playerData?.id]);
+
     const handleAttributeSelect = useCallback((payload: any) => {
         console.log("[PrismaUI] Enviando payload de Level Up para o plugin C++:", payload);
 
         playSound('UISkillIncreaseSD');
         if (typeof (window as any).chooseAttribute === 'function') {
-            (window as any).chooseAttribute(JSON.stringify(payload));
+            (window as any).chooseAttribute(JSON.stringify({ ...payload, actorId: playerData?.id }));
         }
-    }, []);
+    }, [playerData?.id]);
 
     const handleUnlockPerkConfirm = useCallback(() => {
         if (confirmingPerk && typeof (window as any).unlockPerk === 'function') {
             const cost = confirmingPerk.perkCost ?? 0;
             const customCosts = (confirmingPerk.customCosts || []).filter(c => c.resourceId && (c.amount ?? 0) >= 1 && customResources.some(res => res.id === c.resourceId));
             playSound('UISkillsPerkSelect2D');
-            (window as any).unlockPerk(JSON.stringify({ id: confirmingPerk.perk, cost, customCosts }));
+            (window as any).unlockPerk(JSON.stringify({ id: confirmingPerk.perk, cost, customCosts, actorId: playerData?.id }));
         }
         setConfirmingPerk(null);
-    }, [confirmingPerk, customResources]);
+    }, [confirmingPerk, customResources, playerData?.id]);
 
     const handleNodeClick = useCallback((node: PerkNode) => {
         if (isEditorMode) return;
@@ -4037,12 +4130,12 @@ function App() {
             message: t('legendary.confirm_message', { treeName, resetLevel: resetLvl }),
             action: () => {
                 if (typeof (window as any).legendarySkill === 'function') {
-                    (window as any).legendarySkill(JSON.stringify({ treeName }));
+                    (window as any).legendarySkill(JSON.stringify({ treeName, actorId: playerData?.id }));
                 }
                 setConfirmAction(null);
             }
         });
-    }, [skillTrees]);
+    }, [skillTrees, playerData?.id]);
 
     const handleResetAllRequest = useCallback(() => {
         setConfirmAction({
@@ -4050,12 +4143,12 @@ function App() {
             message: t('reset_all.confirm_message'),
             action: () => {
                 if (typeof (window as any).resetAllPerks === 'function') {
-                    (window as any).resetAllPerks("");
+                    (window as any).resetAllPerks(JSON.stringify({ actorId: playerData?.id }));
                 }
                 setConfirmAction(null);
             }
         });
-    }, []);
+    }, [playerData?.id]);
 
     useEffect(() => {
         const handleDeleteRequest = (e: any) => {
@@ -4079,7 +4172,14 @@ function App() {
 
     return (
         <div className={`app-container ${isLoaded ? 'loaded' : ''} ${isExiting ? 'exiting' : ''} ${uiSettings?.performanceMode ? 'performance-mode' : ''}`}>
-            {playerData && <PlayerHeader player={playerData} customResources={customResources} />}
+            {playerData && (
+                <PlayerHeader
+                    player={playerData}
+                    actors={actors}
+                    customResources={customResources}
+                    onActorSelect={handleActorSelect}
+                />
+            )}
 
             {uiSettings?.enableEditorMode && (
                 <div className="editor-toolbar">
@@ -4239,7 +4339,8 @@ function App() {
 
             {shouldShowLevelUp && (
                 <LevelUpModal
-                    key={playerData!.level}
+                    key={`${playerData!.id}-${playerData!.level}-${playerData!.pendingLevelUps || 0}`}
+                    actor={playerData!}
                     trees={skillTrees.filter(tree => !tree.isHidden)}
                     rules={rules}
                     settings={settings}
@@ -4253,6 +4354,7 @@ function App() {
                 <SettingsModal
                     settings={settings}
                     rules={rules}
+                    selectedActor={playerData}
                     formLists={formLists}
                     onClose={() => setIsEditingSettings(false)}
                     onSaveSettings={handleSaveSettings}
