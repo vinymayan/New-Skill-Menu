@@ -19,5 +19,20 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // The Prisma/SKSE bridge is injected dynamically and cannot be typed
+      // from the browser bundle without duplicating its runtime contract.
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
+      // These compiler-oriented rules conflict with the imperative Konva and
+      // external event bridge used by this embedded game UI.
+      'react-hooks/refs': 'off',
+      'react-hooks/set-state-in-effect': 'off',
+      'react-hooks/immutability': 'off',
+    },
   },
 ])

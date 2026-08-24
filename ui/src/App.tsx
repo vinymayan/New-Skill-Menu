@@ -4,7 +4,8 @@ import useEmblaCarousel from 'embla-carousel-react';
 import { SketchPicker } from 'react-color';
 import './App.css';
 import { t, setLanguage, addTranslation, hasTranslation, type Language } from './lib/locales';
-import { Stage, Layer, Line, Circle, Group, Image as KonvaImage, Text as KonvaText, Rect } from 'react-konva';
+import { validateRules } from './lib/rules';
+import { Stage, Layer, Line, Circle, Group, Image as KonvaImage, Rect } from 'react-konva';
 import Konva from 'konva';
 // --- Interfaces ---
 interface Requirement {
@@ -44,16 +45,32 @@ interface CustomCost {
     resourceId: string;
     amount: number;
 }
+type OwnershipSource = 'none' | 'natural' | 'purchased' | 'external';
+interface ResourceReward {
+    resourceId: string;
+    amount: number;
+}
+interface ResetPreview {
+    allowed: boolean;
+    reason: string;
+    perkCount: number;
+    perkPoints: number;
+    resources: Record<string, number>;
+    resetCount?: number;
+    maxResets?: number;
+}
 interface PerkRank {
     perk: string; name: string; description: string;
     perkCost: number; requirements: Requirement[];
     isUnlocked?: boolean; canUnlock?: boolean;
+    ownershipSource?: OwnershipSource;
     customCosts?: CustomCost[];
 }
 interface PerkNode {
     id: string; perk: string; name: string; description: string;
     icon: string; x: number; y: number; requirements: Requirement[];
     links: string[]; isUnlocked: boolean; canUnlock?: boolean;
+    ownershipSource?: OwnershipSource;
     perkCost: number;
     nextRanks?: PerkRank[];
     customCosts?: CustomCost[];
@@ -83,6 +100,7 @@ interface SkillTreeData {
     currentProgress: number;
     cap?: number;
     isHidden?: boolean;
+    resetPreview?: ResetPreview;
 }
 interface PlayerData {
     id: string;
@@ -101,6 +119,7 @@ interface PlayerData {
     pendingLevelUps?: number;
     isLevelUpMenuOpen?: boolean;
     resourceValues?: Record<string, number>;
+    resetPreview?: ResetPreview;
 }
 interface ActorSummary {
     id: string;
@@ -125,6 +144,9 @@ interface LevelRule {
     skillCap?: number;
     useDynamicSkillCap?: boolean;
     carryWeightIncrease?: number;
+    maxPerkPoints?: number;
+    maxResetsPerActor?: number;
+    resourceRewards?: ResourceReward[];
 }
 interface Reward {
     perkPoints?: number;
@@ -163,6 +185,15 @@ interface SettingsData {
         carryWeightIncrease?: number;
         carryWeightMethod?: 'none' | 'auto' | 'linked';
         carryWeightLinkedAttributes?: string[];
+        maxPerkPoints?: number;
+        maxResetsPerActor?: number;
+        resourceRewards?: ResourceReward[];
+    };
+    followerDetection?: {
+        currentFollowerFactions: string[];
+        potentialFollowerFactions: string[];
+        allowHumanoidTeammates: boolean;
+        allowSummoned: boolean;
     };
     categories: string[];
     codes: CodeData[];
@@ -187,7 +218,7 @@ const CustomSelect = ({
     onChange,
     placeholder = t('common.search_short'),
     width = "auto",
-    disableSearch = false // Mantido na assinatura para evitar erros de tipagem, mas o efeito foi removido
+    disableSearch: _disableSearch = false
 }: {
     options: { value: string | number, label: string }[],
     value: string | number,
@@ -391,7 +422,7 @@ const FileBrowserModal = ({ field, initialPath, onClose, onSelect }: { field: st
 };
 
 function getEffectiveSettings(settings: SettingsData, rules: LevelRule[], targetLevel: number, actor: PlayerData) {
-    let eff = { ...settings.base };
+    const eff = { ...settings.base };
 
     const hardCap = settings.base.skillCap || 100;
 
@@ -989,7 +1020,7 @@ const InlineSVGIcon = memo(({ src, className, alt }: { src: string, className?: 
 
                 setSvgContent(finalContent);
             })
-            .catch(err => {
+            .catch(() => {
                 if (isMounted) {
                     const fallback = `<img src="${src}" alt="${alt || ''}" style="width: 100%; height: 100%; object-fit: contain; pointer-events: none;" />`;
                     svgContentCache[src] = fallback;
@@ -1127,6 +1158,7 @@ const KonvaPerkNode = memo(({ node, treeColor, iconPerkPath, width, height, setH
     onNodeClick?: (node: PerkNode) => void,
     hidePerkNames?: boolean
 }) => {
+    void hidePerkNames;
     const groupRef = useRef<Konva.Group>(null);
     const iconGroupRef = useRef<Konva.Group>(null);
 
@@ -1403,7 +1435,7 @@ const TreeCanvasLayer = memo(({ nodes, treeColor, width, height, bounds }: {
 });
 
 
-const TreeConnections = memo(({ nodes, treeColor, width, height }: {
+const _TreeConnections = memo(({ nodes, treeColor, width, height }: {
     nodes: PerkNode[], treeColor: string, width: number, height: number
 }) => {
     if (width === 0 || height === 0) return null;
@@ -1447,7 +1479,7 @@ const TreeConnections = memo(({ nodes, treeColor, width, height }: {
     );
 });
 
-const TreeVisualNodes = memo(({ treeData, isPreview, isEditorMode,
+const TreeVisualNodes = memo(({ treeData, isPreview: _isPreview, isEditorMode: _isEditorMode,
     setHoveredPerk, onNodeClick, uiSettings, containerWidth, containerHeight }: {
         treeData: SkillTreeData,
         isPreview: boolean,
@@ -1459,7 +1491,7 @@ const TreeVisualNodes = memo(({ treeData, isPreview, isEditorMode,
         onNodeClick?: (node: PerkNode) => void
     }) => {
 
-    const { nodes, color, name, iconPerkPath } = treeData;
+    const { nodes, color, iconPerkPath } = treeData;
     const treeColor = color || DEFAULT_COLOR;
 
     if (containerWidth === 0 || containerHeight === 0) return null;
@@ -1520,6 +1552,7 @@ const SettingsModal = ({ settings, rules, selectedActor, customResources, formLi
 }) => {
     const [settingsData, setSettingsData] = useState<SettingsData>(JSON.parse(JSON.stringify(settings)));
     const [rulesData, setRulesData] = useState<LevelRule[]>(JSON.parse(JSON.stringify(rules || [])));
+    const ruleErrors = useMemo(() => validateRules(rulesData), [rulesData]);
 
     const [activeTab, setActiveTab] = useState<'base' | 'rules' | 'codes' | 'categories' | 'resources'>('base');
     const [resourcesData, setResourcesData] = useState<CustomResource[]>(JSON.parse(JSON.stringify(customResources || [])));
@@ -1565,6 +1598,18 @@ const SettingsModal = ({ settings, rules, selectedActor, customResources, formLi
             }
             return next;
         });
+    };
+    const updateRuleReward = (
+        ruleIndex: number,
+        rewardIndex: number,
+        patch: Partial<ResourceReward>
+    ) => {
+        setRulesData(previous => previous.map((rule, index) => {
+            if (index !== ruleIndex) return rule;
+            const rewards = [...(rule.resourceRewards || [])];
+            rewards[rewardIndex] = { ...rewards[rewardIndex], ...patch };
+            return { ...rule, resourceRewards: rewards };
+        }));
     };
 
     const addCode = () => setSettingsData(prev => ({ ...prev, codes: [...(prev.codes || []), { code: t('settings.codes.default_code'), maxUses: 1, currentUses: 0, rewards: {} }] }));
@@ -1668,9 +1713,74 @@ const SettingsModal = ({ settings, rules, selectedActor, customResources, formLi
                             </label>
                             <label>{t('settings.base.skill_points_per_level')} <input type="number" name="skillPointsPerLevel" value={settingsData.base.skillPointsPerLevel ?? ''} onChange={handleBaseChange} /></label>
                             <label>{t('settings.base.max_spendable')} <input type="number" name="maxSkillPointsSpendablePerLevel" value={settingsData.base.maxSkillPointsSpendablePerLevel ?? ''} onChange={handleBaseChange} /></label>
+                            <label>Maximum perk points <input type="number" min="0" name="maxPerkPoints" value={settingsData.base.maxPerkPoints ?? 255} onChange={handleBaseChange} /></label>
+                            <label>Maximum resets per actor (-1 = unlimited) <input type="number" min="-1" name="maxResetsPerActor" value={settingsData.base.maxResetsPerActor ?? -1} onChange={handleBaseChange} /></label>
                             <label>{t('header.health')} (+): <input type="number" name="healthIncrease" value={settingsData.base.healthIncrease ?? ''} onChange={handleBaseChange} /></label>
                             <label>{t('header.magicka')} (+): <input type="number" name="magickaIncrease" value={settingsData.base.magickaIncrease ?? ''} onChange={handleBaseChange} /></label>
                             <label>{t('header.stamina')} (+): <input type="number" name="staminaIncrease" value={settingsData.base.staminaIncrease ?? ''} onChange={handleBaseChange} /></label>
+                            <div style={{ gridColumn: 'span 2', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '15px' }}>
+                                <h3>Follower detection</h3>
+                                <label>Current follower factions (one Plugin|FormID per line)
+                                    <textarea
+                                        value={(settingsData.followerDetection?.currentFollowerFactions || []).join('\n')}
+                                        onChange={event => setSettingsData(previous => ({
+                                            ...previous,
+                                            followerDetection: {
+                                                currentFollowerFactions: event.target.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
+                                                potentialFollowerFactions: previous.followerDetection?.potentialFollowerFactions || [],
+                                                allowHumanoidTeammates: previous.followerDetection?.allowHumanoidTeammates ?? true,
+                                                allowSummoned: previous.followerDetection?.allowSummoned ?? false,
+                                            },
+                                        }))}
+                                    />
+                                </label>
+                                <label>Potential/framework follower factions
+                                    <textarea
+                                        value={(settingsData.followerDetection?.potentialFollowerFactions || []).join('\n')}
+                                        onChange={event => setSettingsData(previous => ({
+                                            ...previous,
+                                            followerDetection: {
+                                                currentFollowerFactions: previous.followerDetection?.currentFollowerFactions || [],
+                                                potentialFollowerFactions: event.target.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
+                                                allowHumanoidTeammates: previous.followerDetection?.allowHumanoidTeammates ?? true,
+                                                allowSummoned: previous.followerDetection?.allowSummoned ?? false,
+                                            },
+                                        }))}
+                                    />
+                                </label>
+                                <label className="checkbox-label">
+                                    <input
+                                        type="checkbox"
+                                        checked={settingsData.followerDetection?.allowHumanoidTeammates ?? true}
+                                        onChange={event => setSettingsData(previous => ({
+                                            ...previous,
+                                            followerDetection: {
+                                                currentFollowerFactions: previous.followerDetection?.currentFollowerFactions || [],
+                                                potentialFollowerFactions: previous.followerDetection?.potentialFollowerFactions || [],
+                                                allowHumanoidTeammates: event.target.checked,
+                                                allowSummoned: previous.followerDetection?.allowSummoned ?? false,
+                                            },
+                                        }))}
+                                    />
+                                    Allow humanoid PlayerTeammate actors
+                                </label>
+                                <label className="checkbox-label">
+                                    <input
+                                        type="checkbox"
+                                        checked={settingsData.followerDetection?.allowSummoned ?? false}
+                                        onChange={event => setSettingsData(previous => ({
+                                            ...previous,
+                                            followerDetection: {
+                                                currentFollowerFactions: previous.followerDetection?.currentFollowerFactions || [],
+                                                potentialFollowerFactions: previous.followerDetection?.potentialFollowerFactions || [],
+                                                allowHumanoidTeammates: previous.followerDetection?.allowHumanoidTeammates ?? true,
+                                                allowSummoned: event.target.checked,
+                                            },
+                                        }))}
+                                    />
+                                    Allow summoned teammates
+                                </label>
+                            </div>
                             <div style={{ gridColumn: 'span 2', marginTop: '15px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '15px' }}>
                                 <h3 style={{ margin: '0 0 10px 0', fontSize: '1.1rem', color: '#4dd0e1' }}>{t('settings.base.carry_weight_title')}</h3>
                                 <div className="settings-grid">
@@ -1722,6 +1832,15 @@ const SettingsModal = ({ settings, rules, selectedActor, customResources, formLi
                     {activeTab === 'rules' && (
                         <div className="dynamic-list-container">
                             <p className="tab-desc">{t('settings.rules.desc')}</p>
+                            {ruleErrors.length > 0 && (
+                                <div className="req-unmet" style={{ marginBottom: '12px' }}>
+                                    {ruleErrors.map((error, index) => (
+                                        <div key={`${error.index}-${error.field}-${index}`}>
+                                            Rule {error.index + 1}, {error.field}: {error.message}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                             {rulesData.map((rule, idx) => (
                                 <div key={idx} className="dynamic-card">
                                     <div className="card-header">
@@ -1756,10 +1875,53 @@ const SettingsModal = ({ settings, rules, selectedActor, customResources, formLi
                                         <label>{t('settings.rules.skill_points')} <input type="number" placeholder={t('common.base')} value={rule.skillPointsPerLevel ?? ''} onChange={e => handleRuleChange(idx, 'skillPointsPerLevel', e.target.value)} /></label>
                                         <label>{t('settings.rules.max_spend')} <input type="number" placeholder={t('common.base')} value={rule.maxSkillPointsSpendablePerLevel ?? ''} onChange={e => handleRuleChange(idx, 'maxSkillPointsSpendablePerLevel', e.target.value)} /></label>
                                         <label>{t('settings.rules.perks_bonus')} <input type="number" placeholder={t('common.base')} value={rule.perksPerLevel ?? ''} onChange={e => handleRuleChange(idx, 'perksPerLevel', e.target.value)} /></label>
+                                        <label>Maximum perk points <input type="number" min="0" placeholder={t('common.base')} value={rule.maxPerkPoints ?? ''} onChange={e => handleRuleChange(idx, 'maxPerkPoints', e.target.value)} /></label>
+                                        <label>Maximum resets per actor <input type="number" min="-1" placeholder={t('common.base')} value={rule.maxResetsPerActor ?? ''} onChange={e => handleRuleChange(idx, 'maxResetsPerActor', e.target.value)} /></label>
                                         <label>{t('settings.rules.health_bonus')} <input type="number" placeholder={t('common.base')} value={rule.healthIncrease ?? ''} onChange={e => handleRuleChange(idx, 'healthIncrease', e.target.value)} /></label>
                                         <label>{t('settings.rules.magicka_bonus')} <input type="number" placeholder={t('common.default')} value={rule.magickaIncrease ?? ''} onChange={e => handleRuleChange(idx, 'magickaIncrease', e.target.value)} /></label>
                                         <label>{t('settings.rules.stamina_bonus')} <input type="number" placeholder={t('common.default')} value={rule.staminaIncrease ?? ''} onChange={e => handleRuleChange(idx, 'staminaIncrease', e.target.value)} /></label>
                                         <label>{t('settings.rules.cw_bonus')} <input type="number" placeholder={t('common.default')} value={rule.carryWeightIncrease ?? ''} onChange={e => handleRuleChange(idx, 'carryWeightIncrease', e.target.value)} /></label>
+                                        <div style={{ gridColumn: 'span 2' }}>
+                                            <strong>Resource rewards per level</strong>
+                                            {(rule.resourceRewards || []).map((reward, rewardIndex) => (
+                                                <div key={rewardIndex} style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                                                    <CustomSelect
+                                                        options={customResources.map(resource => ({ value: resource.id, label: resolveText(resource.name, false) }))}
+                                                        value={reward.resourceId}
+                                                        onChange={value => updateRuleReward(idx, rewardIndex, { resourceId: String(value) })}
+                                                        width="60%"
+                                                    />
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        value={reward.amount}
+                                                        onChange={event => updateRuleReward(idx, rewardIndex, { amount: Number(event.target.value) })}
+                                                    />
+                                                    <button
+                                                        className="delete-btn"
+                                                        onClick={() => setRulesData(previous => previous.map((entry, entryIndex) => entryIndex === idx ? {
+                                                            ...entry,
+                                                            resourceRewards: (entry.resourceRewards || []).filter((_, index) => index !== rewardIndex),
+                                                        } : entry))}
+                                                    >
+                                                        {t('common.delete')}
+                                                    </button>
+                                                </div>
+                                            ))}
+                                            <button
+                                                className="add-btn"
+                                                disabled={customResources.length === 0}
+                                                onClick={() => setRulesData(previous => previous.map((entry, entryIndex) => entryIndex === idx ? {
+                                                    ...entry,
+                                                    resourceRewards: [
+                                                        ...(entry.resourceRewards || []),
+                                                        { resourceId: customResources[0]?.id || '', amount: 1 },
+                                                    ],
+                                                } : entry))}
+                                            >
+                                                Add resource reward
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             ))}
@@ -1858,7 +2020,7 @@ const SettingsModal = ({ settings, rules, selectedActor, customResources, formLi
                 </div>
 
                 <div className="modal-actions" style={{ marginTop: '25px' }}>
-                    <button className="modal-btn yes-btn" onClick={() => {
+                    <button className="modal-btn yes-btn" disabled={ruleErrors.length > 0} onClick={() => {
                         const normalizedSettings = {
                             ...settingsData,
                             base: Object.fromEntries(
@@ -1961,7 +2123,10 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
         setZoom(1);
         setPan({ x: 0, y: 0 });
 
-    }, [treeData.name]); // Roda apenas quando muda de árvore
+        // Bounds and camera intentionally reset only when the selected tree
+        // changes; node edits keep the current editor viewport.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [treeData.name]);
 
     useEffect(() => {
         if (hoveredPerk) {
@@ -2142,7 +2307,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
     }, [handleWheel]);
 
     const handleNodeSave = (savedNode: PerkNode) => {
-        let newNodes = [...treeData.nodes];
+        const newNodes = [...treeData.nodes];
         const exists = newNodes.findIndex(n => n.id === savedNode.id);
         if (exists >= 0) newNodes[exists] = savedNode;
         else {
@@ -2176,7 +2341,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
     const handlePerkNodeClick = useCallback((clickedNode: PerkNode) => {
         if (isEditorMode && connectingFrom) {
             if (connectingFrom !== clickedNode.id && onUpdateNodes) {
-                let newNodes = [...treeData.nodes];
+                const newNodes = [...treeData.nodes];
                 const srcIdx = newNodes.findIndex(n => n.id === connectingFrom);
 
                 if (srcIdx >= 0) {
@@ -2395,7 +2560,16 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                                 )}
                             </div>
                             <div className="tooltip-divider" style={{ backgroundColor: treeColor }}></div>
-                            {currentData.isUnlocked && <div className="rank-status-tag acquired">{t('unlock_perk.acquired')}</div>}
+                            {currentData.isUnlocked && (
+                                <div className="rank-status-tag acquired">
+                                    {t('unlock_perk.acquired')} · {
+                                        currentData.ownershipSource === 'purchased' ? 'purchased here' :
+                                            currentData.ownershipSource === 'natural' ? 'natural/base' :
+                                                currentData.ownershipSource === 'external' ? 'external mod/runtime' :
+                                                    'owned'
+                                    }
+                                </div>
+                            )}
                             <p className="perk-desc" style={{ color: currentData.isUnlocked ? '#66bb6a' : '#ccc' }}>{displayDesc}</p>
 
                             {currentData.requirements && currentData.requirements.length > 0 && (
@@ -2688,7 +2862,7 @@ const UISettingsModal = ({ settings, onClose, onSave }: {
     );
 };
 
-const SkillColumn = memo(({ treeData, uiSettings, globalSettings, formLists, onSelect, onContextMenu, isForcedHover, isEditorMode }: {
+const SkillColumn = memo(({ treeData, uiSettings, globalSettings: _globalSettings, formLists, onSelect, onContextMenu, isForcedHover, isEditorMode }: {
     treeData: SkillTreeData,
     uiSettings: UISettings | null,
     globalSettings: SettingsData | null,
@@ -3528,9 +3702,9 @@ function App() {
     const [skillTrees, setSkillTrees] = useState<SkillTreeData[]>([]);
     const [availableReqs, setAvailableReqs] = useState<RequirementDef[]>([]);
     const [browserField, setBrowserField] = useState<string | null>(null);
-    const [availableLanguages, setAvailableLanguages] = useState<string[]>(['en']);
+    const [, setAvailableLanguages] = useState<string[]>(['en']);
     const [activeCategory, setActiveCategory] = useState<string>("All");
-    const [currentLang, setCurrentLang] = useState<string>('en');
+    const [, setCurrentLang] = useState<string>('en');
     const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
     const [isEditorMode, setIsEditorMode] = useState(false);
     const [isExiting, setIsExiting] = useState(false);
@@ -3631,7 +3805,7 @@ function App() {
         };
     }, []);
 
-    const loadLanguage = useCallback((lang: string) => {
+    const _loadLanguage = useCallback((lang: string) => {
         if (hasTranslation(lang)) {
             setLanguage(lang);
             setCurrentLang(lang);
@@ -3770,7 +3944,7 @@ function App() {
         confirmAction, browserField, isCreatingTree, isEditingUISettings,
         editingTree, isEditingSettings, confirmingPerk, selectedSkill,
         playerData?.isLevelUpMenuOpen, isEditorMode, handleCloseDetail,
-        closeMenuWithAnimation, alertMessage
+        closeMenuWithAnimation, alertMessage, hoveredSkillName
     ]);
 
     const updateTreeNodes = useCallback((treeName: string, newNodes: PerkNode[]) => {
@@ -4124,10 +4298,24 @@ function App() {
     const handleLegendaryRequest = useCallback((treeName: string) => {
         const targetTree = skillTrees.find(t => t.name === treeName);
         const resetLvl = targetTree?.initialLevel || 15;
+        const preview = targetTree?.resetPreview;
+        if (preview && !preview.allowed) {
+            setAlertMessage({
+                title: t('legendary.title'),
+                message: preview.reason === 'reset_limit_reached'
+                    ? `Reset limit reached (${preview.resetCount}/${preview.maxResets}).`
+                    : 'This tree has no perks purchased through this menu to reset.',
+            });
+            return;
+        }
+        const refundSummary = preview
+            ? `\n\nRefund preview: ${preview.perkCount} perks, ${preview.perkPoints} perk points` +
+                Object.entries(preview.resources).map(([id, amount]) => `, ${amount} ${id}`).join('')
+            : '';
 
         setConfirmAction({
             title: t('legendary.title'),
-            message: t('legendary.confirm_message', { treeName, resetLevel: resetLvl }),
+            message: t('legendary.confirm_message', { treeName, resetLevel: resetLvl }) + refundSummary,
             action: () => {
                 if (typeof (window as any).legendarySkill === 'function') {
                     (window as any).legendarySkill(JSON.stringify({ treeName, actorId: playerData?.id }));
@@ -4138,9 +4326,23 @@ function App() {
     }, [skillTrees, playerData?.id]);
 
     const handleResetAllRequest = useCallback(() => {
+        const preview = playerData?.resetPreview;
+        if (preview && !preview.allowed) {
+            setAlertMessage({
+                title: t('reset_all.title'),
+                message: preview.reason === 'reset_limit_reached'
+                    ? `Reset limit reached (${preview.resetCount}/${preview.maxResets}).`
+                    : 'This actor has no perks purchased through this menu to reset.',
+            });
+            return;
+        }
+        const refundSummary = preview
+            ? `\n\nRefund preview: ${preview.perkCount} perks, ${preview.perkPoints} perk points` +
+                Object.entries(preview.resources).map(([id, amount]) => `, ${amount} ${id}`).join('')
+            : '';
         setConfirmAction({
             title: t('reset_all.title'),
-            message: t('reset_all.confirm_message'),
+            message: t('reset_all.confirm_message') + refundSummary,
             action: () => {
                 if (typeof (window as any).resetAllPerks === 'function') {
                     (window as any).resetAllPerks(JSON.stringify({ actorId: playerData?.id }));
@@ -4148,7 +4350,7 @@ function App() {
                 setConfirmAction(null);
             }
         });
-    }, [playerData?.id]);
+    }, [playerData]);
 
     useEffect(() => {
         const handleDeleteRequest = (e: any) => {

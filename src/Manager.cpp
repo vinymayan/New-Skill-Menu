@@ -1,4 +1,5 @@
 #include "Manager.h"
+#include "ActorIdentityService.h"
 #include "Prisma.h"
 #include "API_ActorValueGenerator.h"
 
@@ -472,6 +473,17 @@ void Manager::LoadCustomSkills() {
     SyncLegacyPlayerStateToActorValues();
 }
 
+std::vector<std::string> Manager::GetAvailableSkills() const
+{
+    std::vector<std::string> skills;
+    skills.reserve(customSkillsData.size());
+    for (const auto& [skillId, skill] : customSkillsData) {
+        (void)skill;
+        skills.push_back(skillId);
+    }
+    return skills;
+}
+
 int Manager::GetCustomSkillLevel(RE::Actor* actor, const std::string& skillId) {
     auto dataIt = customSkillsData.find(skillId);
     int fallback = dataIt != customSkillsData.end() ? dataIt->second.initialLevel : 1;
@@ -588,8 +600,40 @@ ActorProgressState& Manager::EnsureActorProgress(RE::Actor* actor) {
     if (!actor) return invalidState;
 
     const auto actorId = actor->GetFormID();
+    const auto stableKey = ActorIdentityService::StableKey(actor);
+
+    if (auto direct = actorProgressStates.find(actorId);
+        direct != actorProgressStates.end() &&
+        !direct->second.actorKey.empty() &&
+        !stableKey.empty() &&
+        direct->second.actorKey != stableKey) {
+        logger::warn(
+            "[ActorIdentity] Runtime FormID {:08X} was reused: stored={} current={}",
+            actorId,
+            direct->second.actorKey,
+            stableKey);
+        actorProgressStates.erase(direct);
+    }
+
+    // A persistent unique actor can receive a different runtime FormID after a
+    // framework respawn. Move its state to the currently active reference.
+    if (!actorProgressStates.contains(actorId) && !stableKey.empty()) {
+        auto stableIt = std::ranges::find_if(
+            actorProgressStates,
+            [&](const auto& entry) {
+                return entry.second.actorKey == stableKey;
+            });
+        if (stableIt != actorProgressStates.end()) {
+            actorProgressStates[actorId] = std::move(stableIt->second);
+            actorProgressStates.erase(stableIt);
+        }
+    }
+
     auto [it, inserted] = actorProgressStates.try_emplace(actorId);
     auto& state = it->second;
+    if (state.actorKey.empty()) {
+        state.actorKey = stableKey;
+    }
     const int observedLevel = std::max(1, static_cast<int>(actor->GetLevel()));
 
     if (inserted || state.lastObservedLevel <= 0) {
@@ -620,19 +664,20 @@ bool Manager::SpendActorPerkPoints(RE::Actor* actor, int amount) {
     return true;
 }
 
-void Manager::ModActorPerkPoints(RE::Actor* actor, int amount) {
+void Manager::ModActorPerkPoints(RE::Actor* actor, int amount, int maximum) {
     if (!actor || amount == 0) return;
+    maximum = std::clamp(maximum, 0, 1000000);
     if (actor->IsPlayerRef()) {
         auto player = RE::PlayerCharacter::GetSingleton();
         if (!player) return;
         int current = static_cast<int>(player->GetPlayerRuntimeData().perkCount);
         player->GetPlayerRuntimeData().perkCount =
-            static_cast<std::uint8_t>(std::clamp(current + amount, 0, 255));
+            static_cast<std::uint8_t>(std::clamp(current + amount, 0, std::min(maximum, 255)));
         return;
     }
 
     auto& state = EnsureActorProgress(actor);
-    state.perkPoints = std::clamp(state.perkPoints + amount, 0, 1000000);
+    state.perkPoints = std::clamp(state.perkPoints + amount, 0, maximum);
 }
 
 int Manager::GetPendingLevelUps(RE::Actor* actor) {
@@ -654,18 +699,27 @@ void Manager::ConsumePendingLevelUps(RE::Actor* actor, int amount) {
     state.highestRewardedLevel += consumed;
 }
 
-void Manager::RecordPurchasedPerk(RE::Actor* actor, RE::FormID perkFormID, int perkPointCost) {
+void Manager::RecordPurchasedPerk(
+    RE::Actor* actor,
+    RE::FormID perkFormID,
+    int perkPointCost,
+    std::vector<PaidResource> resources)
+{
     if (!actor || perkFormID == 0) return;
-    EnsureActorProgress(actor).purchasedPerks[perkFormID] = std::max(0, perkPointCost);
+    PerkPurchaseRecord record;
+    record.perkPointCost = std::max(0, perkPointCost);
+    record.actorLevelAtPurchase = static_cast<int>(actor->GetLevel());
+    record.resources = std::move(resources);
+    EnsureActorProgress(actor).purchasedPerks[perkFormID] = std::move(record);
 }
 
-std::optional<int> Manager::RemovePurchasedPerkRecord(RE::Actor* actor, RE::FormID perkFormID) {
+std::optional<PerkPurchaseRecord> Manager::RemovePurchasedPerkRecord(RE::Actor* actor, RE::FormID perkFormID) {
     if (!actor || perkFormID == 0) return std::nullopt;
     auto actorIt = actorProgressStates.find(actor->GetFormID());
     if (actorIt == actorProgressStates.end()) return std::nullopt;
     auto perkIt = actorIt->second.purchasedPerks.find(perkFormID);
     if (perkIt == actorIt->second.purchasedPerks.end()) return std::nullopt;
-    int paid = perkIt->second;
+    auto paid = std::move(perkIt->second);
     actorIt->second.purchasedPerks.erase(perkIt);
     return paid;
 }
@@ -674,6 +728,41 @@ bool Manager::WasPerkPurchasedForActor(RE::Actor* actor, RE::FormID perkFormID) 
     if (!actor || perkFormID == 0) return false;
     auto actorIt = actorProgressStates.find(actor->GetFormID());
     return actorIt != actorProgressStates.end() && actorIt->second.purchasedPerks.contains(perkFormID);
+}
+
+std::map<RE::FormID, PerkPurchaseRecord> Manager::GetPurchasedPerks(RE::Actor* actor) {
+    if (!actor) return {};
+    EnsureActorProgress(actor);
+    auto actorIt = actorProgressStates.find(actor->GetFormID());
+    return actorIt != actorProgressStates.end() ? actorIt->second.purchasedPerks :
+        std::map<RE::FormID, PerkPurchaseRecord>{};
+}
+
+void Manager::RehydratePurchasedPerks(RE::Actor* actor) {
+    if (!actor) return;
+    auto purchases = GetPurchasedPerks(actor);
+    for (const auto& [perkId, record] : purchases) {
+        (void)record;
+        auto perk = RE::TESForm::LookupByID<RE::BGSPerk>(perkId);
+        if (perk && !actor->HasPerk(perk)) {
+            actor->AddPerk(perk);
+            logger::info(
+                "[Economy] Reapplied purchased perk {:08X} to {} ({:08X})",
+                perkId,
+                actor->GetName(),
+                actor->GetFormID());
+        }
+    }
+}
+
+int Manager::GetActorResetCount(RE::Actor* actor) {
+    return actor ? std::max(0, EnsureActorProgress(actor).resetCount) : 0;
+}
+
+void Manager::RecordActorReset(RE::Actor* actor) {
+    if (!actor) return;
+    auto& state = EnsureActorProgress(actor);
+    state.resetCount = std::clamp(state.resetCount + 1, 0, 1000000);
 }
 
 void Manager::RemoveCustomSkillState(const std::string& skillId) {
@@ -804,10 +893,8 @@ void Manager::AddCustomSkillXPForActor(RE::Actor* actor, const std::string& skil
     if (playerUpdateAlreadyPending) return;
     if (!shouldScheduleNotification) return;
 
-    std::thread([this, skillId, dispName, startLevelSnapshot]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-
-        SKSE::GetTaskInterface()->AddUITask([this, skillId, dispName, startLevelSnapshot]() {
+    SKSE::GetTaskInterface()->AddUITask(
+        [this, skillId, dispName, startLevelSnapshot]() {
             int currentRealLevel;
             float currentRealXP;
             float reqXpForCalc;
@@ -862,8 +949,7 @@ void Manager::AddCustomSkillXPForActor(RE::Actor* actor, const std::string& skil
 
                 questUpdateInstance.Invoke("ShowNotification", nullptr, args, 8);
             }
-            });
-        }).detach();
+        });
 }
 // Calculo do Threshold de XP (Pode ser ajustado para simular 100% a curva vanilla se quiser)
 float Manager::GetRequiredXP(const std::string& skillId, int level) {
@@ -919,22 +1005,46 @@ void Manager::Save(SKSE::SerializationInterface* a_intfc) {
         }
     }
 
-    if (!a_intfc->OpenRecord('APRG', 1)) return;
+    if (!a_intfc->OpenRecord('APRG', 2)) return;
     const auto progressCount = static_cast<std::uint32_t>(actorProgressStates.size());
     a_intfc->WriteRecordData(&progressCount, sizeof(progressCount));
 
     for (const auto& [actorId, state] : actorProgressStates) {
         a_intfc->WriteRecordData(&actorId, sizeof(actorId));
+        const auto actorKeyLength = static_cast<std::uint32_t>(state.actorKey.size());
+        a_intfc->WriteRecordData(&actorKeyLength, sizeof(actorKeyLength));
+        if (actorKeyLength > 0) {
+            a_intfc->WriteRecordData(state.actorKey.data(), actorKeyLength);
+        }
         a_intfc->WriteRecordData(&state.perkPoints, sizeof(state.perkPoints));
         a_intfc->WriteRecordData(&state.lastObservedLevel, sizeof(state.lastObservedLevel));
         a_intfc->WriteRecordData(&state.highestRewardedLevel, sizeof(state.highestRewardedLevel));
         a_intfc->WriteRecordData(&state.pendingLevelUps, sizeof(state.pendingLevelUps));
+        a_intfc->WriteRecordData(&state.resetCount, sizeof(state.resetCount));
 
         const auto perkCount = static_cast<std::uint32_t>(state.purchasedPerks.size());
         a_intfc->WriteRecordData(&perkCount, sizeof(perkCount));
-        for (const auto& [perkId, paidCost] : state.purchasedPerks) {
+        for (const auto& [perkId, purchase] : state.purchasedPerks) {
             a_intfc->WriteRecordData(&perkId, sizeof(perkId));
-            a_intfc->WriteRecordData(&paidCost, sizeof(paidCost));
+            a_intfc->WriteRecordData(&purchase.perkPointCost, sizeof(purchase.perkPointCost));
+            a_intfc->WriteRecordData(&purchase.actorLevelAtPurchase, sizeof(purchase.actorLevelAtPurchase));
+
+            const auto resourceCount = static_cast<std::uint32_t>(purchase.resources.size());
+            a_intfc->WriteRecordData(&resourceCount, sizeof(resourceCount));
+            for (const auto& resource : purchase.resources) {
+                const auto writeString = [&](const std::string& value) {
+                    const auto stringLength = static_cast<std::uint32_t>(value.size());
+                    a_intfc->WriteRecordData(&stringLength, sizeof(stringLength));
+                    if (stringLength > 0) {
+                        a_intfc->WriteRecordData(value.data(), stringLength);
+                    }
+                };
+                writeString(resource.resourceId);
+                writeString(resource.sourceType);
+                writeString(resource.sourceLocator);
+                a_intfc->WriteRecordData(&resource.amount, sizeof(resource.amount));
+                a_intfc->WriteRecordData(&resource.shared, sizeof(resource.shared));
+            }
         }
     }
 }
@@ -958,10 +1068,20 @@ void Manager::Load(SKSE::SerializationInterface* a_intfc) {
                 RE::FormID oldActorId = 0;
                 ActorProgressState state;
                 if (!a_intfc->ReadRecordData(&oldActorId, sizeof(oldActorId))) break;
+                if (version >= 2) {
+                    std::uint32_t actorKeyLength = 0;
+                    if (!a_intfc->ReadRecordData(&actorKeyLength, sizeof(actorKeyLength))) break;
+                    if (actorKeyLength > 1024) break;
+                    state.actorKey.resize(actorKeyLength);
+                    if (actorKeyLength > 0 &&
+                        !a_intfc->ReadRecordData(state.actorKey.data(), actorKeyLength)) break;
+                }
                 if (!a_intfc->ReadRecordData(&state.perkPoints, sizeof(state.perkPoints))) break;
                 if (!a_intfc->ReadRecordData(&state.lastObservedLevel, sizeof(state.lastObservedLevel))) break;
                 if (!a_intfc->ReadRecordData(&state.highestRewardedLevel, sizeof(state.highestRewardedLevel))) break;
                 if (!a_intfc->ReadRecordData(&state.pendingLevelUps, sizeof(state.pendingLevelUps))) break;
+                if (version >= 2 &&
+                    !a_intfc->ReadRecordData(&state.resetCount, sizeof(state.resetCount))) break;
 
                 RE::FormID actorId = 0;
                 bool actorResolved = a_intfc->ResolveFormID(oldActorId, actorId);
@@ -975,22 +1095,63 @@ void Manager::Load(SKSE::SerializationInterface* a_intfc) {
                 if (perkCount > 100000) break;
                 for (std::uint32_t j = 0; j < perkCount; ++j) {
                     RE::FormID oldPerkId = 0;
-                    int paidCost = 0;
+                    PerkPurchaseRecord purchase;
                     if (!a_intfc->ReadRecordData(&oldPerkId, sizeof(oldPerkId))) break;
-                    if (!a_intfc->ReadRecordData(&paidCost, sizeof(paidCost))) break;
+                    if (!a_intfc->ReadRecordData(&purchase.perkPointCost, sizeof(purchase.perkPointCost))) break;
+
+                    if (version >= 2) {
+                        if (!a_intfc->ReadRecordData(
+                            &purchase.actorLevelAtPurchase,
+                            sizeof(purchase.actorLevelAtPurchase))) break;
+
+                        std::uint32_t resourceCount = 0;
+                        if (!a_intfc->ReadRecordData(&resourceCount, sizeof(resourceCount))) break;
+                        if (resourceCount > 10000) break;
+                        purchase.resources.reserve(resourceCount);
+
+                        const auto readString = [&](std::string& value) -> bool {
+                            std::uint32_t stringLength = 0;
+                            if (!a_intfc->ReadRecordData(&stringLength, sizeof(stringLength))) return false;
+                            if (stringLength > 4096) return false;
+                            value.resize(stringLength);
+                            return stringLength == 0 ||
+                                a_intfc->ReadRecordData(value.data(), stringLength);
+                        };
+
+                        for (std::uint32_t k = 0; k < resourceCount; ++k) {
+                            PaidResource resource;
+                            if (!readString(resource.resourceId)) break;
+                            if (!readString(resource.sourceType)) break;
+                            if (!readString(resource.sourceLocator)) break;
+                            if (!a_intfc->ReadRecordData(&resource.amount, sizeof(resource.amount))) break;
+                            if (!a_intfc->ReadRecordData(&resource.shared, sizeof(resource.shared))) break;
+                            if (std::isfinite(resource.amount) && resource.amount > 0.0f) {
+                                purchase.resources.push_back(std::move(resource));
+                            }
+                        }
+                    }
 
                     RE::FormID perkId = 0;
                     if (actorResolved && a_intfc->ResolveFormID(oldPerkId, perkId)) {
-                        state.purchasedPerks[perkId] = std::max(0, paidCost);
+                        purchase.perkPointCost = std::max(0, purchase.perkPointCost);
+                        state.purchasedPerks[perkId] = std::move(purchase);
                     }
                 }
 
-                if (actorResolved) {
+                if (actorResolved || !state.actorKey.empty()) {
                     state.perkPoints = std::clamp(state.perkPoints, 0, 1000000);
                     state.pendingLevelUps = std::clamp(state.pendingLevelUps, 0, 10000);
                     state.lastObservedLevel = std::clamp(state.lastObservedLevel, 0, 10000);
                     state.highestRewardedLevel = std::clamp(state.highestRewardedLevel, 0, 10000);
-                    actorProgressStates[actorId] = std::move(state);
+                    state.resetCount = std::clamp(state.resetCount, 0, 1000000);
+                    if (state.actorKey.empty()) {
+                        if (auto actor = ResolveActorFromFormID(actorId)) {
+                            state.actorKey = ActorIdentityService::StableKey(actor);
+                        }
+                    }
+                    actorProgressStates[
+                        actorResolved ? actorId : oldActorId] =
+                        std::move(state);
                 }
             }
             continue;
@@ -1061,6 +1222,10 @@ void Manager::Load(SKSE::SerializationInterface* a_intfc) {
                 }
             }
         }
+    }
+
+    if (auto player = RE::PlayerCharacter::GetSingleton()) {
+        RehydratePurchasedPerks(player);
     }
 }
 

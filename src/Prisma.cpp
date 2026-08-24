@@ -1,5 +1,12 @@
-#include "Prisma.h"
+﻿#include "Prisma.h"
 #include "Manager.h"
+#include "ActorIdentityService.h"
+#include "PurchaseService.h"
+#include "RequirementService.h"
+#include "ResetService.h"
+#include "ResourceService.h"
+#include "RosterService.h"
+#include "SnapshotService.h"
 
 using json = nlohmann::json;
 
@@ -12,311 +19,20 @@ static bool g_locLoaded = false;
 static bool g_isLevelUpMenuOpen = false;
 static RE::FormID g_selectedActorID = player_refid;
 
+json GetLevelRules();
+json GetSettings();
+json GetUISettings();
+
 static std::string ActorRuntimeKey(RE::Actor* actor) {
-    return actor ? fmt::format("{:08X}", actor->GetFormID()) : "";
+    return ActorIdentityService::RuntimeKey(actor);
 }
 
 static std::string ActorRuleKey(RE::Actor* actor) {
-    if (!actor) return "";
-    if (actor->IsPlayerRef()) return "player";
-
-    auto file = actor->GetFile(0);
-    if (file) {
-        const auto formID = actor->GetFormID();
-        const std::uint32_t localID = (formID & 0xFF000000) == 0xFE000000 ?
-            (formID & 0xFFF) : (formID & 0xFFFFFF);
-        return fmt::format("{}|{:X}", file->GetFilename(), localID);
-    }
-
-    auto base = actor->GetActorBase();
-    if (base) {
-        file = base->GetFile(0);
-        if (file) {
-            const auto formID = base->GetFormID();
-            const std::uint32_t localID = (formID & 0xFF000000) == 0xFE000000 ?
-                (formID & 0xFFF) : (formID & 0xFFFFFF);
-            return fmt::format("{}|{:X}", file->GetFilename(), localID);
-        }
-    }
-    return ActorRuntimeKey(actor);
-}
-
-static bool ActorOwnsPerk(RE::Actor* actor, RE::BGSPerk* perk) {
-    if (!actor || !perk) {
-        return false;
-    }
-
-    const bool runtimeHasPerk = actor->HasPerk(perk);
-
-    auto actorBase = actor->GetActorBase();
-    const bool actorBaseHasPerk =
-        actorBase && actorBase->GetPerkIndex(perk).has_value();
-
-    auto templateBase = actor->GetTemplateBase();
-    const bool templateBaseHasPerk =
-        templateBase &&
-        templateBase != actorBase &&
-        templateBase->GetPerkIndex(perk).has_value();
-
-    const bool purchasedThroughMenu =
-        Manager::GetSingleton()->WasPerkPurchasedForActor(
-            actor,
-            perk->GetFormID());
-
-    const bool ownsPerk =
-        runtimeHasPerk ||
-        actorBaseHasPerk ||
-        templateBaseHasPerk ||
-        purchasedThroughMenu;
-
-    if (!actor->IsPlayerRef() && ownsPerk) {
-        const auto diagnosticKey =
-            (static_cast<std::uint64_t>(actor->GetFormID()) << 32) |
-            perk->GetFormID();
-        static std::unordered_set<std::uint64_t> loggedOwnedPerks;
-        if (loggedOwnedPerks.insert(diagnosticKey).second) {
-            logger::info(
-                "[ActorPerks] actor='{}' actorID={:08X} perk='{}' perkID={:08X} "
-                "runtime={} actorBase={} templateBase={} purchasedLedger={}",
-                actor->GetName(),
-                actor->GetFormID(),
-                perk->GetName(),
-                perk->GetFormID(),
-                runtimeHasPerk,
-                actorBaseHasPerk,
-                templateBaseHasPerk,
-                purchasedThroughMenu);
-        }
-    }
-
-    return ownsPerk;
-}
-
-static bool IsLydiaActor(RE::Actor* actor) {
-    if (!actor) {
-        return false;
-    }
-
-    const auto actorBase = actor->GetActorBase();
-    const auto actorName = actor->GetName();
-    return actor->GetFormID() == 0x000A2C94 ||
-        (actorBase && actorBase->GetFormID() == 0x000A2C8E) ||
-        (actorName && _stricmp(actorName, "Lydia") == 0);
-}
-
-static bool IsActivePlayerCompanion(RE::Actor* actor, bool isHighProcess) {
-    if (!actor) {
-        return false;
-    }
-
-    // Vanilla follower identity:
-    // - CurrentFollowerFaction   = 0001CA7D
-    // - PotentialFollowerFaction = 0005C84D
-    //
-    // highActorHandles already establishes that the actor is currently active.
-    // CurrentFollowerFaction is therefore the strongest vanilla signal.
-    static auto currentFollowerFaction = []() -> RE::TESFaction* {
-        auto dataHandler = RE::TESDataHandler::GetSingleton();
-        return dataHandler ?
-            dataHandler->LookupForm<RE::TESFaction>(0x0001CA7D, "Skyrim.esm") :
-            nullptr;
-    }();
-    static auto potentialFollowerFaction = []() -> RE::TESFaction* {
-        auto dataHandler = RE::TESDataHandler::GetSingleton();
-        return dataHandler ?
-            dataHandler->LookupForm<RE::TESFaction>(0x0005C84D, "Skyrim.esm") :
-            nullptr;
-    }();
-    static auto actorTypeNPC = []() -> RE::BGSKeyword* {
-        auto dataHandler = RE::TESDataHandler::GetSingleton();
-        return dataHandler ?
-            dataHandler->LookupForm<RE::BGSKeyword>(0x00013794, "Skyrim.esm") :
-            nullptr;
-    }();
-
-    auto race = actor->GetRace();
-    const auto lifeState = actor->GetLifeState();
-    const bool isActuallyDead =
-        lifeState == RE::ACTOR_LIFE_STATE::kDying ||
-        lifeState == RE::ACTOR_LIFE_STATE::kDead;
-    const bool isDeadDefault = actor->IsDead();
-    const bool isDeadIncludingEssential = actor->IsDead(false);
-    const bool isBleedingOut = actor->IsBleedingOut();
-    const bool isEssential = actor->IsEssential();
-    const float health =
-        actor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kHealth);
-    const bool isDisabled = actor->IsDisabled();
-    const bool isSummoned = actor->IsSummoned();
-    const bool isSummonedByPlayer = actor->IsSummonedByPlayer();
-    const bool isPlayerTeammate = actor->IsPlayerTeammate();
-    const bool isCurrentFollower =
-        currentFollowerFaction && actor->IsInFaction(currentFollowerFaction);
-    const bool isPotentialFollower =
-        potentialFollowerFaction && actor->IsInFaction(potentialFollowerFaction);
-    const bool isHumanoidNPC =
-        race && actorTypeNPC && race->HasKeyword(actorTypeNPC);
-    const bool isCommandedActor = actor->IsCommandedActor();
-
-    auto commandingActor = actor->GetCommandingActor();
-    const auto commandingActorID =
-        commandingActor ? commandingActor->GetFormID() : RE::FormID{ 0 };
-    const bool isCommandedByPlayer =
-        commandingActor && commandingActor->IsPlayerRef();
-
-    bool accepted = false;
-    std::string_view reason = "not_player_teammate";
-
-    if (!isHighProcess) {
-        reason = "not_in_high_process";
-    }
-    else if (isActuallyDead) {
-        reason = "dead_life_state";
-    }
-    else if (isDisabled) {
-        reason = "disabled";
-    }
-    else if (isSummoned) {
-        reason = "summoned";
-    }
-    else if (isCurrentFollower) {
-        accepted = true;
-        reason = "current_follower_faction";
-    }
-    else if (isPlayerTeammate && isPotentialFollower) {
-        accepted = true;
-        reason = "teammate_and_potential_follower";
-    }
-    else if (isPlayerTeammate && isHumanoidNPC) {
-        accepted = true;
-        reason = "humanoid_teammate_framework_fallback";
-    }
-    else if (isPlayerTeammate) {
-        reason = "teammate_but_not_recognized_follower";
-    }
-
-    const auto actorBase = actor->GetActorBase();
-    const auto actorBaseID = actorBase ? actorBase->GetFormID() : RE::FormID{ 0 };
-    const auto actorName = actor->GetName();
-    const auto raceName = race ? race->GetName() : "";
-    const auto raceID = race ? race->GetFormID() : RE::FormID{ 0 };
-    const auto processLevel = static_cast<std::uint32_t>(actor->GetProcessLevel());
-    const auto diagnosticState = fmt::format(
-        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        isHighProcess,
-        static_cast<std::uint32_t>(lifeState),
-        isActuallyDead,
-        isDeadDefault,
-        isDeadIncludingEssential,
-        isBleedingOut,
-        isEssential,
-        isDisabled,
-        isSummoned,
-        isSummonedByPlayer,
-        isPlayerTeammate,
-        isCurrentFollower,
-        isPotentialFollower,
-        isHumanoidNPC,
-        isCommandedActor,
-        isCommandedByPlayer,
-        commandingActorID,
-        processLevel,
-        accepted,
-        reason);
-
-    // This function can be called several times during a single UI refresh.
-    // Log each actor only when one of the diagnostic fields changes.
-    static std::unordered_map<RE::FormID, std::string> lastDiagnosticState;
-    auto& previousState = lastDiagnosticState[actor->GetFormID()];
-    if (previousState != diagnosticState) {
-        previousState = diagnosticState;
-        logger::info(
-            "[CompanionFilter]{} name='{}' actor={:08X} base={:08X} "
-            "race='{}' raceID={:08X} highProcess={} processLevel={} "
-            "playerTeammate={} currentFollower={} potentialFollower={} humanoidNPC={} "
-            "commandedActor={} commandedByPlayer={} commandingActor={:08X} "
-            "summoned={} summonedByPlayer={} lifeState={} actuallyDead={} "
-            "isDeadDefault={} isDeadFalse={} bleedingOut={} essential={} health={} "
-            "disabled={} accepted={} reason={}",
-            IsLydiaActor(actor) ? "[LYDIA]" : "",
-            actorName ? actorName : "",
-            actor->GetFormID(),
-            actorBaseID,
-            raceName ? raceName : "",
-            raceID,
-            isHighProcess,
-            processLevel,
-            isPlayerTeammate,
-            isCurrentFollower,
-            isPotentialFollower,
-            isHumanoidNPC,
-            isCommandedActor,
-            isCommandedByPlayer,
-            commandingActorID,
-            isSummoned,
-            isSummonedByPlayer,
-            static_cast<std::uint32_t>(lifeState),
-            isActuallyDead,
-            isDeadDefault,
-            isDeadIncludingEssential,
-            isBleedingOut,
-            isEssential,
-            health,
-            isDisabled,
-            accepted,
-            reason);
-    }
-
-    return accepted;
+    return ActorIdentityService::RuleKey(actor);
 }
 
 static std::vector<RE::Actor*> GetSelectableActors() {
-    std::vector<RE::Actor*> actors;
-    std::unordered_set<RE::FormID> seen;
-
-    auto player = RE::PlayerCharacter::GetSingleton();
-    if (player) {
-        actors.push_back(player);
-        seen.insert(player->GetFormID());
-    }
-
-    auto processLists = RE::ProcessLists::GetSingleton();
-    if (processLists) {
-        bool foundLydiaInHighProcess = false;
-
-        // Iterate the native high-process handle array directly. It is the same
-        // source used for active actors by the game's combat/event systems.
-        for (auto& actorHandle : processLists->highActorHandles) {
-            auto actorPtr = actorHandle.get();
-            auto actor = actorPtr.get();
-            if (!actor || actor->IsPlayerRef()) {
-                continue;
-            }
-
-            foundLydiaInHighProcess |= IsLydiaActor(actor);
-            if (IsActivePlayerCompanion(actor, true) && seen.insert(actor->GetFormID()).second) {
-                actors.push_back(actor);
-            }
-        }
-
-        // If Lydia is loaded but not present in highActorHandles, log the same
-        // fields with highProcess=false so the rejection source is explicit.
-        if (!foundLydiaInHighProcess) {
-            if (auto lydia = RE::TESForm::LookupByID<RE::Actor>(0x000A2C94)) {
-                IsActivePlayerCompanion(lydia, false);
-            }
-            else {
-                static bool loggedMissingLydiaReference = false;
-                if (!loggedMissingLydiaReference) {
-                    loggedMissingLydiaReference = true;
-                    logger::info(
-                        "[CompanionFilter][LYDIA] reference 000A2C94 not resolved "
-                        "and Lydia was not found in highActorHandles");
-                }
-            }
-        }
-    }
-
-    return actors;
+    return RosterService::GetSelectableActors(GetSettings());
 }
 
 static RE::Actor* GetSelectedActor() {
@@ -350,10 +66,6 @@ static bool g_resourcesLoaded = false;
 
 static constexpr const char* VAMPIRE_RESOURCE_ID = "nsm_vampire_perk_points";
 static constexpr const char* WEREWOLF_RESOURCE_ID = "nsm_werewolf_perk_points";
-
-json GetLevelRules();
-json GetSettings();
-json GetUISettings();
 
 static std::filesystem::path GetResourcesDir() {
     return std::filesystem::path("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Skill Trees\\Resources");
@@ -440,6 +152,7 @@ void Prisma::SendKeyPress(const std::string& key) {
 json GetCustomResources() {
     // 1. Verifica se já está no cache
     if (g_resourcesLoaded) {
+        ResourceService::SetDefinitions(g_resourcesCache);
         return g_resourcesCache;
     }
 
@@ -466,6 +179,7 @@ json GetCustomResources() {
     // 2. Salva no cache
     g_resourcesCache = resources;
     g_resourcesLoaded = true;
+    ResourceService::SetDefinitions(g_resourcesCache);
 
     return g_resourcesCache;
 }
@@ -1907,7 +1621,16 @@ json GetSettings() {
             {"applyVanillaInitialLevels", true},
             {"carryWeightIncrease", 0.0f},
             {"carryWeightMethod", "none"},
-            {"carryWeightLinkedAttributes", json::array({"Stamina"})}
+            {"carryWeightLinkedAttributes", json::array({"Stamina"})},
+            {"maxPerkPoints", 255},
+            {"maxResetsPerActor", -1},
+            {"resourceRewards", json::array()}
+        }},
+        {"followerDetection", {
+            {"currentFollowerFactions", json::array()},
+            {"potentialFollowerFactions", json::array()},
+            {"allowHumanoidTeammates", true},
+            {"allowSummoned", false}
         }},
         {"categories", {"Combat", "Magic", "Stealth", "Special", "Custom"}},
         {"codes", json::array({
@@ -1932,6 +1655,17 @@ json GetSettings() {
                     if (!loadedSettings["base"].contains(key)) loadedSettings["base"][key] = value;
                 }
                 if (!loadedSettings.contains("categories")) loadedSettings["categories"] = defaultSettings["categories"];
+                if (!loadedSettings.contains("followerDetection") ||
+                    !loadedSettings["followerDetection"].is_object()) {
+                    loadedSettings["followerDetection"] = defaultSettings["followerDetection"];
+                }
+                else {
+                    for (auto& [key, value] : defaultSettings["followerDetection"].items()) {
+                        if (!loadedSettings["followerDetection"].contains(key)) {
+                            loadedSettings["followerDetection"][key] = value;
+                        }
+                    }
+                }
 
                 g_settingsCache = loadedSettings;
                 g_settingsLoaded = true;
@@ -2011,9 +1745,15 @@ static void SaveRulesFromUI(const char* jsonArgs) {
     if (!jsonArgs) return;
     try {
         json newRules = json::parse(jsonArgs);
-        if (newRules.is_array()) {
-            SaveLevelRulesToFile(newRules);
+        const auto errors = RequirementService::ValidateRules(newRules);
+        if (!errors.empty()) {
+            logger::error(
+                "Rules.json rejeitado: {} erro(s): {}",
+                errors.size(),
+                errors.dump());
+            return;
         }
+        SaveLevelRulesToFile(newRules);
     }
     catch (const std::exception& e) {
         logger::error("Erro ao salvar rules da UI: {}", e.what());
@@ -2063,7 +1803,7 @@ json GetLoadedSkillTreeConfigs() {
                     std::ifstream file(entry.path());
                     if (file.is_open()) {
                         try {
-                            json tree = json::parse(file);
+                            tree = json::parse(file);
                             if (!tree.contains("nodes") && !tree.contains("isVanilla")) {
                                 continue;
                             }
@@ -2221,28 +1961,7 @@ std::string GetPlayerSkillsJSON() {
         }
 
         json customResources = GetCustomResources();
-        std::unordered_map<std::string, float> resourceValuesMap;
-        for (auto& res : customResources) {
-            std::string globStr = res.value("glob", "");
-            std::string actorValueStr = res.value("actorValue", "");
-            int val = 0;
-            if (!actorValueStr.empty()) {
-                RE::ActorValue av = GetActorValueFromName(actorValueStr);
-                auto avOwner = actor->AsActorValueOwner();
-                if (av != RE::ActorValue::kNone && avOwner) {
-                    val = static_cast<int>(std::round(avOwner->GetActorValue(av)));
-                }
-            }
-            else if (!globStr.empty()) {
-                RE::FormID globID = ParseFormIDString(globStr);
-                if (globID != 0) {
-                    auto glob = RE::TESForm::LookupByID<RE::TESGlobal>(globID);
-                    if (glob) { 
-                        val = static_cast<int>(std::round(glob->value)); }
-                }
-            }
-            resourceValuesMap[res.value("id", "")] = val;
-        }
+        json resourceValuesMap = ResourceService::BuildValues(actor, customResources);
 
         // --- 1. DADOS BÁSICOS DO JOGADOR (HEADER) ---
         std::string playerName = actor->GetName();
@@ -2300,7 +2019,11 @@ std::string GetPlayerSkillsJSON() {
             {"title", actor->IsPlayerRef() ? "Dragonborn" : "Companion"},
             {"pendingLevelUps", mgr->GetPendingLevelUps(actor)},
             {"isLevelUpMenuOpen", actor->IsPlayerRef() && Prisma::IsLevelUpMenuOpen()},
-            {"resourceValues", resourceValuesMap}
+            {"resourceValues", resourceValuesMap},
+            {"resetPreview", ResetService::Preview(
+                actor,
+                {},
+                currentEffSettings.value("maxResetsPerActor", -1))}
         };
 
         // --- 2. COLETA DE NOVAS INFORMAÇÕES GLOBAIS PARA OS REQUISITOS ---
@@ -2440,28 +2163,40 @@ std::string GetPlayerSkillsJSON() {
                 for (auto& node : tree["nodes"]) {
                     std::string perkStr = node.value("perk", "");
                     bool hasPerk = false;
+                    std::string ownershipSource = "none";
 
                     if (!perkStr.empty()) {
                         RE::FormID fullID = ParseFormIDString(perkStr);
                         if (fullID != 0) {
                             auto perk = RE::TESForm::LookupByID<RE::BGSPerk>(fullID);
-                            if (perk && ActorOwnsPerk(actor, perk)) hasPerk = true;
+                            if (perk) {
+                                auto ownership = SnapshotService::GetPerkOwnership(actor, perk);
+                                hasPerk = ownership.owned;
+                                ownershipSource = ownership.source;
+                            }
                         }
                     }
 
                     node["isUnlocked"] = hasPerk;
+                    node["ownershipSource"] = ownershipSource;
                     if (node.contains("nextRanks") && node["nextRanks"].is_array()) {
                         for (auto& rank : node["nextRanks"]) {
                             std::string rankPerk = rank.value("perk", "");
                             bool rankHas = false;
+                            std::string rankOwnershipSource = "none";
                             if (!rankPerk.empty()) {
                                 RE::FormID fullID = ParseFormIDString(rankPerk);
                                 if (fullID != 0) {
                                     auto rPerk = RE::TESForm::LookupByID<RE::BGSPerk>(fullID);
-                                    if (rPerk && ActorOwnsPerk(actor, rPerk)) rankHas = true;
+                                    if (rPerk) {
+                                        auto ownership = SnapshotService::GetPerkOwnership(actor, rPerk);
+                                        rankHas = ownership.owned;
+                                        rankOwnershipSource = ownership.source;
+                                    }
                                 }
                             }
                             rank["isUnlocked"] = rankHas;
+                            rank["ownershipSource"] = rankOwnershipSource;
                             if (!rankPerk.empty()) unlockedNodesMap[rankPerk] = rankHas;
                             std::string rankId = rank.value("id", "");
                             if (!rankId.empty()) unlockedNodesMap[rankId] = rankHas;
@@ -2946,15 +2681,20 @@ std::string GetPlayerSkillsJSON() {
             if (auto race = selectableActor->GetRace()) {
                 selectableRace = race->GetFullName();
             }
-            availableActors.push_back({
-                {"id", ActorRuntimeKey(selectableActor)},
-                {"ruleKey", ActorRuleKey(selectableActor)},
-                {"name", selectableActor->GetName()},
-                {"race", selectableRace},
-                {"level", selectableActor->GetLevel()},
-                {"kind", selectableActor->IsPlayerRef() ? "player" : "follower"},
-                {"pendingLevelUps", mgr->GetPendingLevelUps(selectableActor)}
-            });
+            auto summary = SnapshotService::BuildActorSummary(selectableActor);
+            summary["race"] = selectableRace;
+            summary["pendingLevelUps"] =
+                mgr->GetPendingLevelUps(selectableActor);
+            availableActors.push_back(std::move(summary));
+        }
+
+        const int maxResets =
+            currentEffSettings.value("maxResetsPerActor", -1);
+        for (auto& tree : allTrees) {
+            tree["resetPreview"] = ResetService::Preview(
+                actor,
+                ResetService::PerksInTree(tree),
+                maxResets);
         }
 
         json finalResponse = {
@@ -2964,6 +2704,7 @@ std::string GetPlayerSkillsJSON() {
             {"trees", allTrees},
             {"settings", settingsData},
             {"rules", rulesData},
+            {"ruleValidation", RequirementService::ValidateRules(rulesData)},
             {"uiSettings", uiSettingsData},
             {"formLists", formLists},
             {"availableRequirements", availableReqs},
@@ -3021,8 +2762,8 @@ static void RedeemCodeFromUI(const char* args) {
         std::string inputCode(args);
         json settings = GetSettings();
         bool updated = false;
-        auto player = RE::PlayerCharacter::GetSingleton();
-        if (!player) return;
+        auto actor = GetSelectedActor();
+        if (!actor) return;
 
         for (auto& codeObj : settings["codes"]) {
             if (codeObj.value("code", "") == inputCode) {
@@ -3035,12 +2776,36 @@ static void RedeemCodeFromUI(const char* args) {
 
                     if (codeObj.contains("rewards")) {
                         auto rw = codeObj["rewards"];
-                        if (rw.contains("perkPoints")) player->GetPlayerRuntimeData().perkCount += rw.value("perkPoints", 0);
-                        if (rw.contains("health")) player->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kHealth, rw.value("health", 0.0f));
-                        if (rw.contains("magicka")) player->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kMagicka, rw.value("magicka", 0.0f));
-                        if (rw.contains("stamina")) player->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kStamina, rw.value("stamina", 0.0f));
+                        const auto effective =
+                            GetEffectiveSettings(actor->GetLevel(), actor);
+                        if (rw.contains("perkPoints")) {
+                            Manager::GetSingleton()->ModActorPerkPoints(
+                                actor,
+                                rw.value("perkPoints", 0),
+                                effective.value("maxPerkPoints", 255));
+                        }
+                        auto owner = actor->AsActorValueOwner();
+                        if (owner && rw.contains("health")) {
+                            owner->ModBaseActorValue(
+                                RE::ActorValue::kHealth,
+                                rw.value("health", 0.0f));
+                        }
+                        if (owner && rw.contains("magicka")) {
+                            owner->ModBaseActorValue(
+                                RE::ActorValue::kMagicka,
+                                rw.value("magicka", 0.0f));
+                        }
+                        if (owner && rw.contains("stamina")) {
+                            owner->ModBaseActorValue(
+                                RE::ActorValue::kStamina,
+                                rw.value("stamina", 0.0f));
+                        }
                     }
-                    logger::info("Codigo '{}' resgatado com sucesso!", inputCode);
+                    logger::info(
+                        "Codigo '{}' resgatado para {} ({:08X}).",
+                        inputCode,
+                        actor->GetName(),
+                        actor->GetFormID());
                 }
                 break;
             }
@@ -3120,128 +2885,64 @@ static bool ResolvePurchaseDefinition(
 }
 
 // Desbloqueio actor-aware com custos revalidados no backend.
-static void UnlockPerkFromUI(const char* args) {
+static void UnlockPerkFromUI(const char* args)
+{
     if (!args) return;
     try {
-        json payload = json::parse(args);
-        std::string perkIDStr = payload.value("id", "");
+        const json payload = json::parse(args);
+        const std::string perkIDStr = payload.value("id", "");
         int cost = 0;
         json customCosts = json::array();
         if (!ResolvePurchaseDefinition(perkIDStr, cost, customCosts)) return;
 
-        RE::FormID perkID = ParseFormIDString(perkIDStr);
-        if (perkID == 0) return;
-
+        const RE::FormID perkID = ParseFormIDString(perkIDStr);
         auto actor = ResolveSelectableActorFromPayload(payload);
-        if (!actor) return;
-        auto mgr = Manager::GetSingleton();
-
         auto perk = RE::TESForm::LookupByID<RE::BGSPerk>(perkID);
-        if (perk && !ActorOwnsPerk(actor, perk)) {
-            bool canAfford = (mgr->GetActorPerkPoints(actor) >= cost);
+        if (!actor || !perk) return;
 
-            json resources = GetCustomResources();
-            std::unordered_map<std::string, RE::TESGlobal*> globMap;
-            std::unordered_map<std::string, RE::ActorValue> actorValueMap;
-
-            // Verifica se o jogador tem os recursos customizados suficientes
-            if (canAfford) {
-                for (auto& cCost : customCosts) {
-                    std::string rId = cCost.value("resourceId", "");
-                    float amt = cCost.value("amount", 0.0f);
-                    if (rId.empty() || amt < 1.0f) continue;
-
-                    std::string globStr = "";
-                    std::string actorValueStr = "";
-                    bool resourceFound = false;
-                    for (auto& res : resources) {
-                        if (res.value("id", "") == rId) {
-                            globStr = res.value("glob", "");
-                            actorValueStr = res.value("actorValue", "");
-                            resourceFound = true;
-                            break;
-                        }
-                    }
-
-                    if (!resourceFound) continue;
-
-                    if (!actorValueStr.empty()) {
-                        RE::ActorValue av = GetActorValueFromName(actorValueStr);
-                        auto avOwner = actor->AsActorValueOwner();
-                        if (av != RE::ActorValue::kNone && avOwner && avOwner->GetActorValue(av) >= amt) {
-                            actorValueMap[rId] = av;
-                        }
-                        else {
-                            canAfford = false; break;
-                        }
-                    }
-                    else if (!globStr.empty()) {
-                        RE::FormID gID = ParseFormIDString(globStr);
-                        if (gID != 0) {
-                            auto glob = RE::TESForm::LookupByID<RE::TESGlobal>(gID);
-                            if (glob && glob->value >= amt) {
-                                globMap[rId] = glob;
-                            }
-                            else {
-                                canAfford = false; break;
-                            }
-                        }
-                        else { canAfford = false; break; }
-                    }
-                    else { canAfford = false; break; }
-                }
-            }
-
-            if (canAfford) {
-                if (!mgr->SpendActorPerkPoints(actor, cost)) return;
-                actor->AddPerk(perk);
-                mgr->RecordPurchasedPerk(actor, perkID, cost);
-
-                // Desconta recursos customizados
-                for (auto& cCost : customCosts) {
-                    std::string rId = cCost.value("resourceId", "");
-                    float amt = cCost.value("amount", 0.0f);
-                    if (rId.empty() || amt < 1.0f) continue;
-                    if (globMap.count(rId)) {
-                        globMap[rId]->value -= amt;
-                    }
-                    else if (actorValueMap.count(rId)) {
-                        actor->AsActorValueOwner()->ModBaseActorValue(actorValueMap[rId], -amt);
-                    }
-                }
-
-                auto dispatcher = SKSE::GetModCallbackEventSource();
-                if (dispatcher) {
-                    SKSE::ModCallbackEvent modEvent{
-                        RE::BSFixedString("NSM_PerkAquired"),
-                        RE::BSFixedString(perkIDStr), // Passa a string do FormID (ex: Skyrim.esm|1234)
-                        static_cast<float>(perkID),   // Passa o ID Numérico bruto no float como bônus
-                        actor
-                    };
-                    dispatcher->SendEvent(&modEvent);
-                    logger::debug("Evento NSM_PerkAquired disparado para o perk: {}", perkIDStr);
-                }
-                logger::info(
-                    "Perk {} desbloqueado para {} ({:08X}). Custo: {}",
-                    perkIDStr,
-                    actor->GetName(),
-                    actor->GetFormID(),
-                    cost);
-                Prisma::SendUpdateToUI();
-            }
-            else {
-                logger::warn("Tentativa de desbloqueio de perk sem recursos suficientes.");
-            }
+        const auto snapshot = json::parse(GetPlayerSkillsJSON());
+        const auto validation =
+            RequirementService::ValidatePurchaseSnapshot(snapshot, perkIDStr);
+        if (!validation.allowed) {
+            logger::warn(
+                "[Economy] Purchase rejected actor={:08X} perk={} reason={}",
+                actor->GetFormID(),
+                perkIDStr,
+                validation.reason);
+            return;
         }
+
+        const auto result = PurchaseService::Purchase(
+            actor,
+            perk,
+            cost,
+            customCosts,
+            GetCustomResources());
+        if (!result.success) {
+            logger::warn(
+                "[Economy] Purchase failed actor={:08X} perk={} reason={}",
+                actor->GetFormID(),
+                perkIDStr,
+                result.reason);
+            return;
+        }
+
+        if (auto dispatcher = SKSE::GetModCallbackEventSource()) {
+            SKSE::ModCallbackEvent modEvent{
+                RE::BSFixedString("NSM_PerkAquired"),
+                RE::BSFixedString(perkIDStr),
+                static_cast<float>(perkID),
+                actor
+            };
+            dispatcher->SendEvent(&modEvent);
+        }
+        Prisma::SendUpdateToUI();
     }
     catch (const std::exception& e) {
         logger::error("Erro ao desbloquear perk: {}", e.what());
     }
 }
 
-
-
-// Função para lidar com o Level Up (Escolha de Atributo)
 static void ChooseAttributeFromUI(const char* args) {
     if (!args) return;
     try {
@@ -3277,6 +2978,9 @@ static void ChooseAttributeFromUI(const char* args) {
         if (requestedSkillPoints > std::min(allowedSkillPoints, allowedSpend)) return;
 
         int totalExtraPerks = 0;
+        int maxPerkPoints = GetEffectiveSettings(
+            firstRewardLevel + requestedLevelUps - 1,
+            actor).value("maxPerkPoints", 255);
         logger::info(
             "[Prisma] Processando {} level ups para {} ({:08X}).",
             levelUpsArray.size(),
@@ -3302,6 +3006,7 @@ static void ChooseAttributeFromUI(const char* args) {
             float staminaInc = effSettings.value("staminaIncrease", 10.0f);
             int perksPerLevel = effSettings.value("perksPerLevel", 1);
             bool refillAttributes = effSettings.value("refillAttributesOnLevelUp", false);
+            maxPerkPoints = effSettings.value("maxPerkPoints", maxPerkPoints);
 
             if (attribute == "Health") actor->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kHealth, healthInc);
             else if (attribute == "Magicka") actor->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kMagicka, magickaInc);
@@ -3335,6 +3040,24 @@ static void ChooseAttributeFromUI(const char* args) {
                 actor->AsActorValueOwner()->RestoreActorValue(RE::ActorValue::kStamina, 999999.0f);
             }
 
+            for (const auto& reward :
+                effSettings.value("resourceRewards", json::array())) {
+                std::string error;
+                if (!ResourceService::Credit(
+                    actor,
+                    reward.value("resourceId", ""),
+                    reward.value("amount", 0.0f),
+                    GetCustomResources(),
+                    error)) {
+                    logger::warn(
+                        "[Economy] Level resource reward failed actor={:08X} "
+                        "level={} reason={}",
+                        actor->GetFormID(),
+                        lvl,
+                        error);
+                }
+            }
+
             totalExtraPerks += perksPerLevel;
         }
 
@@ -3354,7 +3077,9 @@ static void ChooseAttributeFromUI(const char* args) {
         }
 
         // 3. Compensa os Perk Points finais (soma/subtrai as regras efetivas dos níveis agrupados)
-        if (totalExtraPerks != 0) mgr->ModActorPerkPoints(actor, totalExtraPerks);
+        if (totalExtraPerks != 0) {
+            mgr->ModActorPerkPoints(actor, totalExtraPerks, maxPerkPoints);
+        }
 
         // Limpa as pendências já processadas
         mgr->ConsumePendingLevelUps(actor, requestedLevelUps);
@@ -3410,10 +3135,25 @@ static void SaveSkillTreesFromUI(const char* jsonArgs) {
             tree.erase("currentLevel");
             tree.erase("currentProgress");
             tree.erase("cap");
+            tree.erase("resetPreview");
             if (tree.contains("nodes") && tree["nodes"].is_array()) {
                 for (auto& node : tree["nodes"]) {
                     node.erase("isUnlocked");
                     node.erase("canUnlock");
+                    node.erase("ownershipSource");
+                    if (node.contains("nextRanks") && node["nextRanks"].is_array()) {
+                        for (auto& rank : node["nextRanks"]) {
+                            rank.erase("isUnlocked");
+                            rank.erase("canUnlock");
+                            rank.erase("ownershipSource");
+                            if (rank.contains("requirements") &&
+                                rank["requirements"].is_array()) {
+                                for (auto& requirement : rank["requirements"]) {
+                                    requirement.erase("isMet");
+                                }
+                            }
+                        }
+                    }
                     if (node.contains("requirements") && node["requirements"].is_array()) {
                         for (auto& req : node["requirements"]) {
                             req.erase("isMet");
@@ -3449,61 +3189,6 @@ static void SaveSkillTreesFromUI(const char* jsonArgs) {
     }
 }
 
-// =========================================================================================
-// HELPER: REMOVER PERKS DE UMA ÁRVORE E CALCULAR REEMBOLSO
-// =========================================================================================
-int RemovePerksFromTree(const json& treeData, RE::Actor* actor) {
-    int pointsRefunded = 0;
-    if (!actor) return 0;
-    auto mgr = Manager::GetSingleton();
-
-    if (!treeData.contains("nodes") || !treeData["nodes"].is_array()) return 0;
-
-    for (const auto& node : treeData["nodes"]) {
-        // 1. Verifica e remove Ranks Superiores primeiro (de trás para frente)
-        if (node.contains("nextRanks") && node["nextRanks"].is_array()) {
-            const auto& ranks = node["nextRanks"];
-            // Itera reverso para remover do maior rank para o menor
-            for (auto it = ranks.rbegin(); it != ranks.rend(); ++it) {
-                std::string rankIDStr = it->value("perk", "");
-                int cost = it->value("perkCost", 1);
-
-                RE::FormID rankID = ParseFormIDString(rankIDStr);
-                if (rankID != 0) {
-                    auto perk = RE::TESForm::LookupByID<RE::BGSPerk>(rankID);
-                    if (perk && actor->HasPerk(perk)) {
-                        auto paidCost = mgr->RemovePurchasedPerkRecord(actor, rankID);
-                        if (!paidCost && !actor->IsPlayerRef()) continue;
-                        logger::debug("[RemovePerks] Removendo Rank Perk: {:08X} ({})", rankID, rankIDStr);
-                        actor->RemovePerk(perk);
-                        pointsRefunded += paidCost.value_or(cost);
-                    }
-                }
-            }
-        }
-
-        // 2. Verifica e remove o Perk Base
-        std::string baseIDStr = node.value("perk", "");
-        int baseCost = node.value("perkCost", 1);
-        RE::FormID baseID = ParseFormIDString(baseIDStr);
-
-        if (baseID != 0) {
-            auto perk = RE::TESForm::LookupByID<RE::BGSPerk>(baseID);
-            if (perk && actor->HasPerk(perk)) {
-                auto paidCost = mgr->RemovePurchasedPerkRecord(actor, baseID);
-                if (!paidCost && !actor->IsPlayerRef()) continue;
-                logger::debug("[RemovePerks] Removendo Base Perk: {:08X} ({})", baseID, baseIDStr);
-                actor->RemovePerk(perk);
-                pointsRefunded += paidCost.value_or(baseCost);
-            }
-        }
-    }
-    return pointsRefunded;
-}
-
-// =========================================================================================
-// CALLBACK: LEGENDARY SKILL (Reseta Nivel + Perks)
-// =========================================================================================
 static void LegendarySkillFromUI(const char* args) {
     if (!args) return;
     try {
@@ -3533,18 +3218,26 @@ static void LegendarySkillFromUI(const char* args) {
             return;
         }
 
-        // 1. Remover Perks e Calcular Pontos
-        int refunded = RemovePerksFromTree(targetTree, actor);
-
-        // 2. Devolver Pontos
-        if (refunded > 0) {
-            Manager::GetSingleton()->ModActorPerkPoints(actor, refunded);
-
-            logger::info("[Legendary] Skill '{}': {} pontos devolvidos.", treeName, refunded);
+        const auto effective = GetEffectiveSettings(actor->GetLevel(), actor);
+        const auto resetResult = ResetService::Execute(
+            actor,
+            ResetService::PerksInTree(targetTree),
+            GetCustomResources(),
+            effective.value("maxPerkPoints", 255),
+            effective.value("maxResetsPerActor", -1),
+            true);
+        if (!resetResult.value("success", false)) {
+            logger::warn(
+                "[Legendary] Reset rejeitado para '{}' reason={}",
+                treeName,
+                resetResult.value("reason", "unknown"));
+            return;
         }
-        else {
-            logger::debug("[Legendary] Skill '{}' nao teve perks a reembolsar.", treeName);
-        }
+        logger::info(
+            "[Legendary] Skill '{}': {} perks removidos e {} pontos devolvidos.",
+            treeName,
+            resetResult.value("removed", 0),
+            resetResult.value("refundedPerkPoints", 0));
 
         // 3. Resetar Nível da Skill
         int initialLevel = targetTree.value("initialLevel", 15);
@@ -3565,13 +3258,9 @@ static void LegendarySkillFromUI(const char* args) {
             logger::debug("[Legendary] Nivel da custom skill {} resetado para {}", treeName, initialLevel);
         }
 
-        std::thread([]() {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-            SKSE::GetTaskInterface()->AddUITask([]() {
-                logger::debug("[Legendary] Disparando atualizacao da UI apos delay...");
-                Prisma::SendUpdateToUI();
-                });
-            }).detach();
+        SKSE::GetTaskInterface()->AddUITask([]() {
+            Prisma::SendUpdateToUI();
+        });
     }
     catch (const std::exception& e) {
         logger::error("Erro em LegendarySkillFromUI: {}", e.what());
@@ -3589,33 +3278,28 @@ static void ResetAllPerksFromUI(const char* args) {
 
         logger::debug("[ResetAll] Iniciando remocao de TODOS os perks...");
 
-        json allTrees = GetLoadedSkillTreeConfigs();
-        int totalRefunded = 0;
-
-        for (const auto& tree : allTrees) {
-            int refunded = RemovePerksFromTree(tree, actor);
-            if (refunded > 0) {
-                logger::debug("[ResetAll] {} pontos reembolsados da arvore '{}'.", refunded, tree.value("name", "Unknown"));
-            }
-            totalRefunded += refunded;
+        const auto effective = GetEffectiveSettings(actor->GetLevel(), actor);
+        const auto resetResult = ResetService::Execute(
+            actor,
+            {},
+            GetCustomResources(),
+            effective.value("maxPerkPoints", 255),
+            effective.value("maxResetsPerActor", -1),
+            true);
+        if (!resetResult.value("success", false)) {
+            logger::warn(
+                "[ResetAll] Reset rejeitado reason={}",
+                resetResult.value("reason", "unknown"));
+            return;
         }
 
-        if (totalRefunded > 0) {
-            Manager::GetSingleton()->ModActorPerkPoints(actor, totalRefunded);
-
-            logger::info("[ResetAll] {} pontos totais devolvidos ao jogador.", totalRefunded);
-        }
-        else {
-            logger::debug("[ResetAll] Nenhum perk foi removido (Nenhum ponto reembolsado).");
-        }
-
-        std::thread([]() {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-            SKSE::GetTaskInterface()->AddUITask([]() {
-                logger::debug("[ResetAll] Disparando atualizacao da UI apos delay...");
-                Prisma::SendUpdateToUI();
-                });
-            }).detach();
+        logger::info(
+            "[ResetAll] {} perks removidos, {} pontos devolvidos.",
+            resetResult.value("removed", 0),
+            resetResult.value("refundedPerkPoints", 0));
+        SKSE::GetTaskInterface()->AddUITask([]() {
+            Prisma::SendUpdateToUI();
+        });
     }
     catch (const std::exception& e) {
         logger::error("Erro em ResetAllPerksFromUI: {}", e.what());

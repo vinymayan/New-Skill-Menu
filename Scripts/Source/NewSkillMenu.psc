@@ -61,3 +61,24 @@ Bool Function HasCustomPerkForActor(Int actorFormID, String perkId) Global Nativ
 Bool Function AddCustomPerkForActor(Int actorFormID, String perkId) Global Native
 
 Bool Function RemoveCustomPerkForActor(Int actorFormID, String perkId) Global Native
+
+; =======================================================
+; V4 API - ACTOR-SPECIFIC ECONOMY
+; =======================================================
+
+Int Function GetActorPerkPoints(Int actorFormID) Global Native
+
+; Returns the actor's resulting balance.
+Int Function ModActorPerkPoints(Int actorFormID, Int amount) Global Native
+
+Float Function GetActorResource(Int actorFormID, String resourceId) Global Native
+
+; Positive values credit; negative values debit when sufficient.
+Bool Function ModActorResource(Int actorFormID, String resourceId, Float amount) Global Native
+
+; =======================================================
+; V5 API - AVAILABLE CUSTOM SKILLS
+; =======================================================
+
+; Returns the IDs accepted by AddCustomSkillXP and its actor-aware variant.
+String[] Function GetAvailableSkills() Global Native

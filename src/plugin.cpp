@@ -2,10 +2,20 @@
 #include "Hooks.h"
 #include "InputEventHandler.h"
 #include "Manager.h"
+#include "ResourceService.h"
 #include "SkillMenuAPI.h"
 
+extern nlohmann::json GetCustomResources();
 
 extern void ApplyVanillaInitialLevels();
+
+namespace
+{
+    RE::Actor* ResolveAPIActor(RE::FormID actorFormID)
+    {
+        return RE::TESForm::LookupByID<RE::Actor>(actorFormID);
+    }
+}
 
 extern "C" __declspec(dllexport) void* GetSkillMenuAPI() {
     static SkillMenuAPI::Interface api{
@@ -92,6 +102,77 @@ extern "C" __declspec(dllexport) void* GetSkillMenuAPI() {
         [](RE::FormID actorFormID, const char* perkId) -> bool {
             if (!perkId) return false;
             return Manager::GetSingleton()->RemoveCustomPerkForActorID(actorFormID, perkId);
+        },
+        [](RE::FormID actorFormID) -> int {
+            return Manager::GetSingleton()->GetActorPerkPoints(
+                ResolveAPIActor(actorFormID));
+        },
+        [](RE::FormID actorFormID, int amount) -> int {
+            auto actor = ResolveAPIActor(actorFormID);
+            if (!actor) return 0;
+            Manager::GetSingleton()->ModActorPerkPoints(actor, amount);
+            return Manager::GetSingleton()->GetActorPerkPoints(actor);
+        },
+        [](RE::FormID actorFormID, const char* resourceId) -> float {
+            if (!resourceId) return 0.0f;
+            return ResourceService::GetValue(
+                ResolveAPIActor(actorFormID),
+                resourceId,
+                GetCustomResources());
+        },
+        [](RE::FormID actorFormID, const char* resourceId, float amount) -> bool {
+            if (!resourceId) return false;
+            std::string error;
+            return ResourceService::Modify(
+                ResolveAPIActor(actorFormID),
+                resourceId,
+                amount,
+                GetCustomResources(),
+                error);
+        },
+        []() -> SkillMenuAPI::SkillListView {
+            static std::vector<std::string> skillStorage;
+            static std::vector<const char*> skillPointers;
+            skillStorage = Manager::GetSingleton()->GetAvailableSkills();
+            skillPointers.clear();
+            skillPointers.reserve(skillStorage.size());
+            for (const auto& skillId : skillStorage) {
+                skillPointers.push_back(skillId.c_str());
+            }
+            return {
+                skillPointers.empty() ? nullptr : skillPointers.data(),
+                static_cast<uint32_t>(skillPointers.size())
+            };
+        },
+        []() -> SkillMenuAPI::SkillListView {
+            static std::vector<std::string> resourceStorage;
+            static std::vector<const char*> resourcePointers;
+            resourceStorage.clear();
+            for (const auto& resource : GetCustomResources()) {
+                if (!resource.is_object()) {
+                    continue;
+                }
+                auto id = resource.value("id", "");
+                if (!id.empty()) {
+                    resourceStorage.push_back(std::move(id));
+                }
+            }
+            std::ranges::sort(resourceStorage);
+            resourceStorage.erase(
+                std::unique(
+                    resourceStorage.begin(),
+                    resourceStorage.end()),
+                resourceStorage.end());
+            resourcePointers.clear();
+            resourcePointers.reserve(resourceStorage.size());
+            for (const auto& resourceId : resourceStorage) {
+                resourcePointers.push_back(resourceId.c_str());
+            }
+            return {
+                resourcePointers.empty() ?
+                    nullptr : resourcePointers.data(),
+                static_cast<uint32_t>(resourcePointers.size())
+            };
         }
     };
     return &api;
@@ -186,6 +267,52 @@ namespace PapyrusAPI {
         return Manager::GetSingleton()->RemoveCustomPerkForActorID(static_cast<RE::FormID>(actorFormID), perkId.c_str());
     }
 
+    int GetActorPerkPoints(RE::StaticFunctionTag*, int actorFormID) {
+        return Manager::GetSingleton()->GetActorPerkPoints(
+            ResolveAPIActor(static_cast<RE::FormID>(actorFormID)));
+    }
+
+    int ModActorPerkPoints(RE::StaticFunctionTag*, int actorFormID, int amount) {
+        auto actor = ResolveAPIActor(static_cast<RE::FormID>(actorFormID));
+        if (!actor) return 0;
+        Manager::GetSingleton()->ModActorPerkPoints(actor, amount);
+        return Manager::GetSingleton()->GetActorPerkPoints(actor);
+    }
+
+    float GetActorResource(
+        RE::StaticFunctionTag*,
+        int actorFormID,
+        RE::BSFixedString resourceId) {
+        return ResourceService::GetValue(
+            ResolveAPIActor(static_cast<RE::FormID>(actorFormID)),
+            resourceId.c_str(),
+            GetCustomResources());
+    }
+
+    bool ModActorResource(
+        RE::StaticFunctionTag*,
+        int actorFormID,
+        RE::BSFixedString resourceId,
+        float amount) {
+        std::string error;
+        return ResourceService::Modify(
+            ResolveAPIActor(static_cast<RE::FormID>(actorFormID)),
+            resourceId.c_str(),
+            amount,
+            GetCustomResources(),
+            error);
+    }
+
+    std::vector<RE::BSFixedString> GetAvailableSkills(RE::StaticFunctionTag*) {
+        std::vector<RE::BSFixedString> result;
+        const auto skills = Manager::GetSingleton()->GetAvailableSkills();
+        result.reserve(skills.size());
+        for (const auto& skillId : skills) {
+            result.emplace_back(skillId);
+        }
+        return result;
+    }
+
     int GetAPIVersion(RE::StaticFunctionTag*) {
         return SkillMenuAPI::Version;
     }
@@ -210,6 +337,11 @@ namespace PapyrusAPI {
         vm->RegisterFunction("HasCustomPerkForActor", "NewSkillMenu", HasCustomPerkForActor);
         vm->RegisterFunction("AddCustomPerkForActor", "NewSkillMenu", AddCustomPerkForActor);
         vm->RegisterFunction("RemoveCustomPerkForActor", "NewSkillMenu", RemoveCustomPerkForActor);
+        vm->RegisterFunction("GetActorPerkPoints", "NewSkillMenu", GetActorPerkPoints);
+        vm->RegisterFunction("ModActorPerkPoints", "NewSkillMenu", ModActorPerkPoints);
+        vm->RegisterFunction("GetActorResource", "NewSkillMenu", GetActorResource);
+        vm->RegisterFunction("ModActorResource", "NewSkillMenu", ModActorResource);
+        vm->RegisterFunction("GetAvailableSkills", "NewSkillMenu", GetAvailableSkills);
 
         vm->RegisterFunction("GetAPIVersion", "NewSkillMenu", GetAPIVersion);
         return true;
@@ -260,6 +392,39 @@ namespace {
             }
             if (eventName == "DynamicFormsGeneratorUpdated") {
                 Manager::GetSingleton()->RefreshLists(a_event->strArg.c_str());
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            auto actor = a_event->sender ?
+                a_event->sender->As<RE::Actor>() :
+                nullptr;
+            if (eventName == "NSM_AddActorPerkPoints" && actor) {
+                Manager::GetSingleton()->ModActorPerkPoints(
+                    actor,
+                    static_cast<int>(std::round(a_event->numArg)));
+                Prisma::SendUpdateToUI();
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            if (eventName == "NSM_AddActorResource" && actor) {
+                std::string error;
+                if (!ResourceService::Modify(
+                    actor,
+                    a_event->strArg.c_str(),
+                    a_event->numArg,
+                    GetCustomResources(),
+                    error)) {
+                    logger::warn(
+                        "NSM_AddActorResource rejected actor={:08X} reason={}",
+                        actor->GetFormID(),
+                        error);
+                }
+                Prisma::SendUpdateToUI();
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            if (eventName == "NSM_AddActorXP" && actor) {
+                Manager::GetSingleton()->AddCustomSkillXPForActor(
+                    actor,
+                    a_event->strArg.c_str(),
+                    a_event->numArg);
                 return RE::BSEventNotifyControl::kContinue;
             }
 

@@ -9,6 +9,7 @@
 #include <mutex>
 #include <unordered_set>
 #include <optional>
+#include "EconomyTypes.h"
 
 struct InternalFormInfo {
     RE::FormID formID;
@@ -50,14 +51,6 @@ struct CustomSkillState {
     int bonusLevel = 0;
 };
 
-struct ActorProgressState {
-    int perkPoints = 0;
-    int lastObservedLevel = 0;
-    int highestRewardedLevel = 0;
-    int pendingLevelUps = 0;
-    std::map<RE::FormID, int> purchasedPerks;
-};
-
 class Manager {
 public:
     static Manager* GetSingleton() {
@@ -68,6 +61,7 @@ public:
     void PopulateAllLists();
     void RefreshLists(std::string_view a_signatures);
     void LoadCustomSkills(); 
+    std::vector<std::string> GetAvailableSkills() const;
 
     static std::string ToUTF8(std::string_view a_str);
     const std::vector<InternalFormInfo>& GetList(const std::string& typeName);
@@ -101,13 +95,21 @@ public:
     ActorProgressState& EnsureActorProgress(RE::Actor* actor);
     int GetActorPerkPoints(RE::Actor* actor);
     bool SpendActorPerkPoints(RE::Actor* actor, int amount);
-    void ModActorPerkPoints(RE::Actor* actor, int amount);
+    void ModActorPerkPoints(RE::Actor* actor, int amount, int maximum = 1000000);
     int GetPendingLevelUps(RE::Actor* actor);
     void QueuePendingLevelUps(RE::Actor* actor, int amount);
     void ConsumePendingLevelUps(RE::Actor* actor, int amount);
-    void RecordPurchasedPerk(RE::Actor* actor, RE::FormID perkFormID, int perkPointCost);
-    std::optional<int> RemovePurchasedPerkRecord(RE::Actor* actor, RE::FormID perkFormID);
+    void RecordPurchasedPerk(
+        RE::Actor* actor,
+        RE::FormID perkFormID,
+        int perkPointCost,
+        std::vector<PaidResource> resources = {});
+    std::optional<PerkPurchaseRecord> RemovePurchasedPerkRecord(RE::Actor* actor, RE::FormID perkFormID);
     bool WasPerkPurchasedForActor(RE::Actor* actor, RE::FormID perkFormID) const;
+    std::map<RE::FormID, PerkPurchaseRecord> GetPurchasedPerks(RE::Actor* actor);
+    void RehydratePurchasedPerks(RE::Actor* actor);
+    int GetActorResetCount(RE::Actor* actor);
+    void RecordActorReset(RE::Actor* actor);
     void RemoveCustomSkillState(const std::string& skillId);
     float GetRequiredXP(const std::string& skillId, int level);
 
