@@ -85,10 +85,27 @@ namespace
 
     bool ResolvePaidResource(
         const ResourceService::json& definition,
+        RE::Actor* actor,
         std::string_view resourceId,
         float amount,
         PaidResource& result)
     {
+        if (actor &&
+            actor != RE::PlayerCharacter::GetSingleton() &&
+            !definition.value("glob", "").empty() &&
+            definition.value("npcUsesActorValue", false)) {
+            const auto npcActorValue = definition.value("npcActorValue", "");
+            if (npcActorValue.empty()) return false;
+            result = {
+                std::string(resourceId),
+                "actorValue",
+                npcActorValue,
+                amount,
+                false
+            };
+            return true;
+        }
+
         const auto actorValue = definition.value("actorValue", "");
         const auto global = definition.value("glob", "");
         if (!actorValue.empty()) {
@@ -134,7 +151,7 @@ float ResourceService::GetValue(
     if (!definition) return 0.0f;
 
     PaidResource resource;
-    if (!ResolvePaidResource(*definition, resourceId, 0.0f, resource)) {
+    if (!ResolvePaidResource(*definition, actor, resourceId, 0.0f, resource)) {
         return 0.0f;
     }
 
@@ -187,7 +204,7 @@ bool ResourceService::Debit(
         const auto definition = FindDefinition(resourceId, definitions);
         PaidResource resource;
         if (!definition ||
-            !ResolvePaidResource(*definition, resourceId, amount, resource)) {
+            !ResolvePaidResource(*definition, actor, resourceId, amount, resource)) {
             error = "unknown_resource:" + resourceId;
             Refund(actor, paid);
             paid.clear();
@@ -243,7 +260,7 @@ bool ResourceService::Credit(
     const auto definition = FindDefinition(resourceId, definitions);
     PaidResource resource;
     if (!definition ||
-        !ResolvePaidResource(*definition, resourceId, amount, resource)) {
+        !ResolvePaidResource(*definition, actor, resourceId, amount, resource)) {
         error = "unknown_resource:" + std::string(resourceId);
         return false;
     }

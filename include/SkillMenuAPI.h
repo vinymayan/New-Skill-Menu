@@ -64,5 +64,9 @@ namespace SkillMenuAPI {
         // V5: each view is valid until the next call to its respective getter.
         SkillListView (*GetAvailableSkills)();
         SkillListView (*GetAvailableResources)();
+
+        // V5 additions: modify the actor's base custom-skill level, not its bonus.
+        void (*ModCustomSkillLevelForActor)(RE::FormID actorFormID, const char* skillId, int amount);
+        void (*SetCustomSkillLevelForActor)(RE::FormID actorFormID, const char* skillId, int level);
     };
 }

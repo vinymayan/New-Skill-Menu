@@ -1,5 +1,6 @@
 ﻿#include "Prisma.h"
 #include "Manager.h"
+#include "Configuration.h"
 #include "ActorIdentityService.h"
 #include "PurchaseService.h"
 #include "RequirementService.h"
@@ -46,6 +47,34 @@ static RE::Actor* GetSelectedActor() {
     return RE::PlayerCharacter::GetSingleton();
 }
 
+static std::optional<int> GetProjectedFollowerLevel(
+    RE::Actor* actor,
+    int currentPlayerLevel,
+    int projectedPlayerLevel)
+{
+    if (!actor || actor->IsPlayerRef() || projectedPlayerLevel <= currentPlayerLevel) return std::nullopt;
+    auto actorBase = actor->GetActorBase();
+    if (!actorBase || !actorBase->HasPCLevelMult()) return std::nullopt;
+
+    const float multiplier = static_cast<float>(actorBase->actorData.level) / 1000.0f;
+    if (multiplier <= 0.0f) return std::nullopt;
+    const int minimum = std::max(1, static_cast<int>(actorBase->actorData.calcLevelMin));
+    const int maximum = actorBase->actorData.calcLevelMax > 0 ?
+        std::max(minimum, static_cast<int>(actorBase->actorData.calcLevelMax)) : 10000;
+    const auto clampLevel = [&](int level) { return std::clamp(level, minimum, maximum); };
+    const auto floorLevel = [&](int playerLevel) {
+        return clampLevel(static_cast<int>(std::floor(playerLevel * multiplier)));
+    };
+    const auto roundedLevel = [&](int playerLevel) {
+        return clampLevel(static_cast<int>(std::lround(playerLevel * multiplier)));
+    };
+
+    const int observedLevel = static_cast<int>(actor->GetLevel());
+    if (floorLevel(currentPlayerLevel) == observedLevel) return floorLevel(projectedPlayerLevel);
+    if (roundedLevel(currentPlayerLevel) == observedLevel) return roundedLevel(projectedPlayerLevel);
+    return std::nullopt;
+}
+
 struct CachedTreeData {
     json data;
     std::filesystem::file_time_type lastWriteTime;
@@ -64,11 +93,33 @@ static bool g_uiSettingsLoaded = false;
 static json g_resourcesCache = json::array();
 static bool g_resourcesLoaded = false;
 
+static const std::filesystem::path NSM_CONFIG_DIR = "Data/Viny Mods/NSM";
+static const std::filesystem::path NSM_LOCALIZATION_DIR = NSM_CONFIG_DIR / "Localization";
+static const std::filesystem::path LEGACY_CONFIG_DIR =
+    std::filesystem::path("Data/PrismaUI/views") / PRODUCT_NAME;
+
+static void ImportLegacyFile(const std::filesystem::path& destination, const std::filesystem::path& legacy) {
+    if (std::filesystem::exists(destination) || !std::filesystem::exists(legacy)) return;
+    std::filesystem::create_directories(destination.parent_path());
+    std::error_code error;
+    std::filesystem::copy_file(legacy, destination, std::filesystem::copy_options::skip_existing, error);
+    if (error) logger::warn("Could not migrate {}: {}", legacy.string(), error.message());
+}
+
+static void ImportLegacyDirectory(const std::filesystem::path& destination, const std::filesystem::path& legacy) {
+    if (!std::filesystem::exists(legacy) || !std::filesystem::is_directory(legacy)) return;
+    std::filesystem::create_directories(destination);
+    for (const auto& entry : std::filesystem::directory_iterator(legacy)) {
+        if (entry.is_regular_file()) ImportLegacyFile(destination / entry.path().filename(), entry.path());
+    }
+}
+
 static constexpr const char* VAMPIRE_RESOURCE_ID = "nsm_vampire_perk_points";
 static constexpr const char* WEREWOLF_RESOURCE_ID = "nsm_werewolf_perk_points";
 
 static std::filesystem::path GetResourcesDir() {
-    return std::filesystem::path("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Skill Trees\\Resources");
+    ImportLegacyDirectory(NSM_CONFIG_DIR / "Resources", LEGACY_CONFIG_DIR / "Skill Trees/Resources");
+    return NSM_CONFIG_DIR / "Resources";
 }
 
 static bool IsDefaultResourceId(const std::string& id) {
@@ -88,15 +139,19 @@ static json GetDefaultCustomResources() {
         {
             {"id", VAMPIRE_RESOURCE_ID},
             {"name", "Vampire Perk Points"},
-            {"glob", ""},
-            {"actorValue", "Vampirism"},
+            {"glob", "Dawnguard.esm|0000693A"},
+            {"actorValue", ""},
+            {"npcUsesActorValue", false},
+            {"npcActorValue", ""},
             {"isDefault", true}
         },
         {
             {"id", WEREWOLF_RESOURCE_ID},
             {"name", "Werewolf Perk Points"},
-            {"glob", ""},
-            {"actorValue", "Werewolf"},
+            {"glob", "Dawnguard.esm|00006939"},
+            {"actorValue", ""},
+            {"npcUsesActorValue", false},
+            {"npcActorValue", ""},
             {"isDefault", true}
         }
     });
@@ -112,7 +167,38 @@ static void EnsureDefaultCustomResources() {
         if (IsResourceSuppressed(id)) continue;
 
         std::filesystem::path filePath = dir / (id + ".json");
-        if (std::filesystem::exists(filePath)) continue;
+        if (std::filesystem::exists(filePath)) {
+            try {
+                std::ifstream input(filePath);
+                auto existing = json::parse(input);
+                const auto global = res.value("glob", "");
+                bool changed = false;
+                if (existing.value("glob", "") != global ||
+                    !existing.value("actorValue", "").empty() ||
+                    existing.contains("defaultObject")) {
+                    existing["glob"] = global;
+                    existing["actorValue"] = "";
+                    existing.erase("defaultObject");
+                    changed = true;
+                }
+                if (!existing.contains("npcUsesActorValue")) {
+                    existing["npcUsesActorValue"] = false;
+                    changed = true;
+                }
+                if (!existing.contains("npcActorValue")) {
+                    existing["npcActorValue"] = "";
+                    changed = true;
+                }
+                if (changed) {
+                    std::ofstream output(filePath);
+                    output << existing.dump(4);
+                }
+            }
+            catch (const std::exception& error) {
+                logger::warn("Could not migrate default resource {}: {}", id, error.what());
+            }
+            continue;
+        }
 
         std::ofstream file(filePath);
         if (file.is_open()) {
@@ -242,6 +328,18 @@ static void DeleteResourceFromUI(const char* args) {
         }
     }
     catch (...) {}
+}
+
+void SaveResourcesToFile(const json& resources) {
+    const auto payload = resources.dump();
+    SaveResourcesFromUI(payload.c_str());
+    GetCustomResources();
+}
+
+void DeleteResourceByID(const std::string& id) {
+    const auto payload = json{ {"id", id} }.dump();
+    DeleteResourceFromUI(payload.c_str());
+    GetCustomResources();
 }
 
 static void PlayUISound(const char* soundEditorID) {
@@ -423,7 +521,17 @@ static void ExportTreeFromUI(const char* jsonArgs) {
 }
 
 std::vector<std::string> GetAvailableLanguages() {
-    return { "NSM_Language" };
+    ImportLegacyDirectory(NSM_LOCALIZATION_DIR, LEGACY_CONFIG_DIR / "Localization");
+    std::vector<std::string> languages;
+    if (std::filesystem::exists(NSM_LOCALIZATION_DIR)) {
+        for (const auto& entry : std::filesystem::directory_iterator(NSM_LOCALIZATION_DIR)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".json") {
+                languages.push_back(entry.path().stem().string());
+            }
+        }
+    }
+    std::ranges::sort(languages);
+    return languages;
 }
 
 
@@ -434,7 +542,8 @@ json GetLocalizationContent() {
     }
 
     json merged = json::object();
-    std::filesystem::path locDir = "Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Localization";
+    ImportLegacyDirectory(NSM_LOCALIZATION_DIR, LEGACY_CONFIG_DIR / "Localization");
+    const auto& locDir = NSM_LOCALIZATION_DIR;
 
     if (std::filesystem::exists(locDir) && std::filesystem::is_directory(locDir)) {
         for (const auto& entry : std::filesystem::directory_iterator(locDir)) {
@@ -1559,7 +1668,8 @@ json GetLevelRules() {
         return g_rulesCache;
     }
 
-    std::filesystem::path rulesPath("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Rules.json");
+    const auto rulesPath = NSM_CONFIG_DIR / "Rules.json";
+    ImportLegacyFile(rulesPath, LEGACY_CONFIG_DIR / "Rules.json");
 
     if (std::filesystem::exists(rulesPath)) {
         std::ifstream file(rulesPath);
@@ -1576,7 +1686,7 @@ json GetLevelRules() {
     }
 
     json defaultRules = json::array({});
-    std::filesystem::create_directories("Data\\PrismaUI\\views\\" PRODUCT_NAME);
+    std::filesystem::create_directories(NSM_CONFIG_DIR);
     std::ofstream file(rulesPath);
     if (file.is_open()) file << defaultRules.dump(4);
 
@@ -1586,8 +1696,8 @@ json GetLevelRules() {
 }
 
 void SaveLevelRulesToFile(const json& rulesArr) {
-    std::filesystem::create_directories("Data\\PrismaUI\\views\\" PRODUCT_NAME);
-    std::ofstream file("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Rules.json");
+    std::filesystem::create_directories(NSM_CONFIG_DIR);
+    std::ofstream file(NSM_CONFIG_DIR / "Rules.json");
     if (file.is_open()) {
         file << rulesArr.dump(4);
         logger::info("rules.json salvo com sucesso.");
@@ -1601,7 +1711,8 @@ json GetSettings() {
         return g_settingsCache;
     }
 
-    std::filesystem::path settingsPath("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Settings.json");
+    const auto settingsPath = NSM_CONFIG_DIR / "Settings.json";
+    ImportLegacyFile(settingsPath, LEGACY_CONFIG_DIR / "Settings.json");
 
     json defaultSettings = {
         {"base", {
@@ -1677,7 +1788,7 @@ json GetSettings() {
         }
     }
 
-    std::filesystem::create_directories("Data\\PrismaUI\\views\\" PRODUCT_NAME);
+    std::filesystem::create_directories(NSM_CONFIG_DIR);
     std::ofstream file(settingsPath);
     if (file.is_open()) file << defaultSettings.dump(4);
 
@@ -1762,8 +1873,8 @@ static void SaveRulesFromUI(const char* jsonArgs) {
 
 // Salva as configurações passando o JSON objeto
 void SaveSettingsToFile(const json& settingsObj) {
-    std::filesystem::create_directories("Data\\PrismaUI\\views\\" PRODUCT_NAME);
-    std::ofstream file("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\Settings.json");
+    std::filesystem::create_directories(NSM_CONFIG_DIR);
+    std::ofstream file(NSM_CONFIG_DIR / "Settings.json");
     if (file.is_open()) {
         file << settingsObj.dump(4);
     }
@@ -1877,7 +1988,8 @@ json GetUISettings() {
         return g_uiSettingsCache;
     }
 
-    std::filesystem::path settingsPath("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\uisettings.json");
+    const auto settingsPath = NSM_CONFIG_DIR / "UISettings.json";
+    ImportLegacyFile(settingsPath, LEGACY_CONFIG_DIR / "uisettings.json");
 
     json defaultUISettings = {
         {"language", "NSM_Language"},
@@ -1886,7 +1998,34 @@ json GetUISettings() {
         {"performanceMode", false},
         {"columnPreviewMode", "full"},
         {"enableEditorMode", false},
-        {"hidePerkNames", false}
+        {"hidePerkNames", false},
+        {"normalTextSizePercent", 100},
+        {"headerTextSizePercent", 100},
+        {"carouselTextSizePercent", 100},
+        {"treeTitleTextSizePercent", 100},
+        {"perkTitleTextSizePercent", 100},
+        {"perkTextSizePercent", 100},
+        {"bottomTextSizePercent", 100},
+        {"editorTextSizePercent", 100},
+        {"editorButtonScalePercent", 100},
+        {"barWidthPercent", 100},
+        {"barHeightPercent", 100},
+        {"popupMinWidthPixels", 300},
+        {"popupMaxWidthPixels", 520},
+        {"popupPaddingPixels", 16},
+        {"levelUpModalWidthPercent", 82},
+        {"levelUpModalHeightPercent", 86},
+        {"levelUpTitleSizePercent", 125},
+        {"levelUpTextSizePercent", 115},
+        {"levelUpButtonScalePercent", 120},
+        {"levelUpSpacingPercent", 120},
+        {"primaryTextColor", { 1.0, 1.0, 1.0, 1.0 }},
+        {"secondaryTextColor", { 0.8, 0.8, 0.8, 1.0 }},
+        {"accentColor", { 0.302, 0.816, 0.882, 1.0 }},
+        {"lockedTextColor", { 0.667, 0.667, 0.667, 1.0 }},
+        {"successColor", { 0.298, 0.686, 0.314, 1.0 }},
+        {"dangerColor", { 1.0, 0.322, 0.322, 1.0 }},
+        {"backgroundColor", { 0.0, 0.0, 0.0, 0.6 }}
     };
 
     if (std::filesystem::exists(settingsPath)) {
@@ -1910,7 +2049,7 @@ json GetUISettings() {
         }
     }
 
-    std::filesystem::create_directories("Data\\PrismaUI\\views\\" PRODUCT_NAME);
+    std::filesystem::create_directories(NSM_CONFIG_DIR);
     std::ofstream file(settingsPath);
     if (file.is_open()) file << defaultUISettings.dump(4);
 
@@ -1920,27 +2059,18 @@ json GetUISettings() {
 }
 
 // Salvar configurações da UI vindas do React
+void SaveUISettingsToFile(const json& newSettings) {
+    std::filesystem::create_directories(NSM_CONFIG_DIR);
+    std::ofstream file(NSM_CONFIG_DIR / "UISettings.json");
+    if (file.is_open()) file << newSettings.dump(4);
+    g_uiSettingsCache = newSettings;
+    g_uiSettingsLoaded = true;
+}
+
 static void SaveUISettingsFromUI(const char* jsonArgs) {
     if (!jsonArgs) return;
-    try {
-        json newSettings = json::parse(jsonArgs);
-        std::filesystem::path dir("Data\\PrismaUI\\views\\" PRODUCT_NAME);
-        if (!std::filesystem::exists(dir)) std::filesystem::create_directories(dir);
-
-        std::ofstream file("Data\\PrismaUI\\views\\" PRODUCT_NAME "\\uisettings.json");
-        if (file.is_open()) {
-            file << newSettings.dump(4);
-            file.close();
-            logger::info("uisettings.json salvo no disco.");
-        }
-
-        // ATUALIZA O CACHE DIRETAMENTE
-        g_uiSettingsCache = newSettings;
-        g_uiSettingsLoaded = true;
-    }
-    catch (const std::exception& e) {
-        logger::error("Erro ao salvar uisettings.json: {}", e.what());
-    }
+    try { SaveUISettingsToFile(json::parse(jsonArgs)); }
+    catch (const std::exception& e) { logger::error("Erro ao salvar UISettings.json: {}", e.what()); }
 }
 
 std::string GetPlayerSkillsJSON() {
@@ -1960,6 +2090,21 @@ std::string GetPlayerSkillsJSON() {
             }
         }
 
+        const int currentPlayerLevel = static_cast<int>(player->GetLevel());
+        const int projectedPlayerLevel = currentPlayerLevel + mgr->GetPendingLevelUps(player);
+        if (projectedPlayerLevel > currentPlayerLevel) {
+            for (auto selectableActor : GetSelectableActors()) {
+                if (!selectableActor || selectableActor->IsPlayerRef()) continue;
+                mgr->EnsureActorProgress(selectableActor);
+                if (auto projected = GetProjectedFollowerLevel(
+                    selectableActor,
+                    currentPlayerLevel,
+                    projectedPlayerLevel)) {
+                    mgr->QueuePendingLevelUpsThrough(selectableActor, *projected);
+                }
+            }
+        }
+
         json customResources = GetCustomResources();
         json resourceValuesMap = ResourceService::BuildValues(actor, customResources);
 
@@ -1968,11 +2113,11 @@ std::string GetPlayerSkillsJSON() {
         auto avOwner = actor->AsActorValueOwner();
 
         float hpCur = avOwner->GetActorValue(RE::ActorValue::kHealth);
-        float hpMax = avOwner->GetBaseActorValue(RE::ActorValue::kHealth);
+        float hpMax = actor->GetActorValueMax(RE::ActorValue::kHealth);
         float mpCur = avOwner->GetActorValue(RE::ActorValue::kMagicka);
-        float mpMax = avOwner->GetBaseActorValue(RE::ActorValue::kMagicka);
+        float mpMax = actor->GetActorValueMax(RE::ActorValue::kMagicka);
         float spCur = avOwner->GetActorValue(RE::ActorValue::kStamina);
-        float spMax = avOwner->GetBaseActorValue(RE::ActorValue::kStamina);
+        float spMax = actor->GetActorValueMax(RE::ActorValue::kStamina);
         int perkPoints = mgr->GetActorPerkPoints(actor);
         int playerLevel = actor->GetLevel();
         int realPlayerLevel = player->GetLevel();
@@ -2018,6 +2163,7 @@ std::string GetPlayerSkillsJSON() {
             {"dragonSouls", dragonSouls},
             {"title", actor->IsPlayerRef() ? "Dragonborn" : "Companion"},
             {"pendingLevelUps", mgr->GetPendingLevelUps(actor)},
+            {"firstPendingLevel", mgr->GetFirstPendingLevel(actor)},
             {"isLevelUpMenuOpen", actor->IsPlayerRef() && Prisma::IsLevelUpMenuOpen()},
             {"resourceValues", resourceValuesMap},
             {"resetPreview", ResetService::Preview(
@@ -2058,6 +2204,7 @@ std::string GetPlayerSkillsJSON() {
 
         // D. Mapa Global de Levels de TODAS as Skills (necessário para o requisito de Any Skill)
         std::unordered_map<std::string, int> allSkillLevelsMap;
+        std::unordered_map<std::string, int> requirementSkillLevelsMap;
         std::unordered_map<std::string, bool> unlockedNodesMap;
 
         // --- PRIMEIRA VARREDURA: COLETAR NÍVEIS E PERKS ---
@@ -2106,18 +2253,18 @@ std::string GetPlayerSkillsJSON() {
 
             // A partir daqui usamos a leitura normal da Engine (mutável) para saber o progresso da barra
             int currentLevel = staticInitialLevel;
+            int requirementLevel = staticInitialLevel;
             float progressPercent = 0.0f;
 
             if (isVanilla) {
                 RE::ActorValue av = GetActorValueFromName(skillName);
                 if (av != RE::ActorValue::kNone) {
-                    // Aqui sim pegamos o nível atual que o jogador upou!
-                    if (useBaseSkill) {
-                        currentLevel = static_cast<int>(actor->AsActorValueOwner()->GetBaseActorValue(av));
-                    }
-                    else {
-                        currentLevel = static_cast<int>(actor->AsActorValueOwner()->GetActorValue(av));
-                    }
+                    auto owner = actor->AsActorValueOwner();
+                    const auto baseLevel = static_cast<int>(owner->GetBaseActorValue(av));
+                    const auto permanentLevel = static_cast<int>(owner->GetPermanentActorValue(av));
+                    const auto effectiveLevel = static_cast<int>(owner->GetActorValue(av));
+                    currentLevel = useBaseSkill ? permanentLevel : effectiveLevel;
+                    requirementLevel = useBaseSkill ? baseLevel : effectiveLevel;
                     if (playerSkills && playerSkills->data) {
                         uint32_t avInt = static_cast<uint32_t>(av);
                         if (avInt >= 6 && avInt <= 23) {
@@ -2134,14 +2281,9 @@ std::string GetPlayerSkillsJSON() {
             }
             else {
                 int baseLevel = mgr->GetCustomSkillLevel(actor, skillName);
-                int bonusLevel = mgr->GetCustomSkillBonus(actor, skillName);
-
-                if (useBaseSkill) {
-                    currentLevel = baseLevel;
-                }
-                else {
-                    currentLevel = baseLevel + bonusLevel;
-                }
+                int totalLevel = mgr->GetCustomSkillTotalLevel(actor, skillName);
+                currentLevel = totalLevel;
+                requirementLevel = useBaseSkill ? baseLevel : totalLevel;
 
                 float currentXP = mgr->GetCustomSkillXP(actor, skillName);
                 float reqXP = mgr->GetRequiredXP(skillName, baseLevel);
@@ -2156,7 +2298,8 @@ std::string GetPlayerSkillsJSON() {
 
             tree["currentLevel"] = currentLevel;
             tree["currentProgress"] = progressPercent;
-            allSkillLevelsMap[skillName] = currentLevel; // Registra na memória global
+            allSkillLevelsMap[skillName] = requirementLevel;
+            requirementSkillLevelsMap[skillName] = requirementLevel;
 
             // Varre Perks
             if (tree.contains("nodes") && tree["nodes"].is_array()) {
@@ -2212,7 +2355,10 @@ std::string GetPlayerSkillsJSON() {
 
         // --- SEGUNDA VARREDURA: AVALIAR REQUISITOS (Nodes e Trees) ---
         for (auto& tree : allTrees) {
-            int currentTreeLevel = tree.value("currentLevel", 15);
+            const auto skillName = tree.value("name", "Unknown");
+            const auto requirementLevel = requirementSkillLevelsMap.find(skillName);
+            int currentTreeLevel = requirementLevel != requirementSkillLevelsMap.end() ?
+                requirementLevel->second : tree.value("currentLevel", 15);
 
             // AVALIA REQUISITOS DA ÁRVORE (Se existirem)
             if (tree.contains("treeRequirements") && tree["treeRequirements"].is_array()) {
@@ -2952,14 +3098,35 @@ static void ChooseAttributeFromUI(const char* args) {
 
         auto actor = ResolveSelectableActorFromPayload(payload);
         if (!actor) return;
+        if (actor->GetFormID() != g_selectedActorID) {
+            logger::warn(
+                "[LevelUp] Rejected allocation for non-selected actor {:08X}.",
+                actor->GetFormID());
+            return;
+        }
+
+        const auto actorSnapshot = json::parse(GetPlayerSkillsJSON());
+        std::unordered_map<std::string, bool> allocatableTrees;
+        for (const auto& tree : actorSnapshot.value("trees", json::array())) {
+            const std::string treeName = tree.value("name", "");
+            if (treeName.empty()) continue;
+
+            bool isUnlocked = !tree.value("isHidden", false);
+            for (const auto& requirement : tree.value("treeRequirements", json::array())) {
+                if (!requirement.value("isMet", true)) {
+                    isUnlocked = false;
+                    break;
+                }
+            }
+            allocatableTrees[treeName] = isUnlocked;
+        }
+
         auto mgr = Manager::GetSingleton();
         const int requestedLevelUps = static_cast<int>(levelUpsArray.size());
         const int pendingBefore = mgr->GetPendingLevelUps(actor);
         if (requestedLevelUps <= 0 || requestedLevelUps > pendingBefore) return;
 
-        const int firstRewardLevel = actor->IsPlayerRef() ?
-            static_cast<int>(actor->GetLevel()) + 1 :
-            std::max(1, static_cast<int>(actor->GetLevel()) - pendingBefore + 1);
+        const int firstRewardLevel = mgr->GetFirstPendingLevel(actor);
         int allowedSkillPoints = 0;
         int allowedSpend = 0;
         for (int i = 0; i < requestedLevelUps; ++i) {
@@ -2973,6 +3140,14 @@ static void ChooseAttributeFromUI(const char* args) {
             if (!amountVal.is_number_integer()) return;
             const int amount = amountVal.get<int>();
             if (amount < 0) return;
+            const auto tree = allocatableTrees.find(skillName);
+            if (amount > 0 && (tree == allocatableTrees.end() || !tree->second)) {
+                logger::warn(
+                    "[LevelUp] Rejected allocation in locked or unavailable tree '{}' for actor {:08X}.",
+                    skillName,
+                    actor->GetFormID());
+                return;
+            }
             requestedSkillPoints += amount;
         }
         if (requestedSkillPoints > std::min(allowedSkillPoints, allowedSpend)) return;
@@ -3084,8 +3259,17 @@ static void ChooseAttributeFromUI(const char* args) {
         // Limpa as pendências já processadas
         mgr->ConsumePendingLevelUps(actor, requestedLevelUps);
 
+        bool hasPendingLevelUps = false;
+        RE::Actor* nextPendingActor = nullptr;
+        for (auto selectableActor : GetSelectableActors()) {
+            if (!selectableActor || mgr->GetPendingLevelUps(selectableActor) <= 0) continue;
+            hasPendingLevelUps = true;
+            if (!nextPendingActor && selectableActor != actor) nextPendingActor = selectableActor;
+        }
+        if (nextPendingActor) g_selectedActorID = nextPendingActor->GetFormID();
+
         auto msgQueue = RE::UIMessageQueue::GetSingleton();
-        if (actor->IsPlayerRef() && msgQueue) {
+        if (!hasPendingLevelUps && msgQueue && Prisma::IsLevelUpMenuOpen()) {
             msgQueue->AddMessage(RE::LevelUpMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
         }
 

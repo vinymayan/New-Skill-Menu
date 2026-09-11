@@ -1,11 +1,10 @@
-#include "Plugin.h"
+﻿#include "Plugin.h"
+#include "Configuration.h"
 #include "Hooks.h"
 #include "InputEventHandler.h"
 #include "Manager.h"
 #include "ResourceService.h"
 #include "SkillMenuAPI.h"
-
-extern nlohmann::json GetCustomResources();
 
 extern void ApplyVanillaInitialLevels();
 
@@ -173,6 +172,14 @@ extern "C" __declspec(dllexport) void* GetSkillMenuAPI() {
                     nullptr : resourcePointers.data(),
                 static_cast<uint32_t>(resourcePointers.size())
             };
+        },
+        [](RE::FormID actorFormID, const char* skillId, int amount) {
+            if (!skillId) return;
+            Manager::GetSingleton()->ModCustomSkillLevelForActorID(actorFormID, skillId, amount);
+        },
+        [](RE::FormID actorFormID, const char* skillId, int level) {
+            if (!skillId) return;
+            Manager::GetSingleton()->SetCustomSkillLevelForActorID(actorFormID, skillId, level);
         }
     };
     return &api;
@@ -245,6 +252,14 @@ namespace PapyrusAPI {
 
     int GetCustomSkillBonusForActor(RE::StaticFunctionTag*, int actorFormID, RE::BSFixedString skillId) {
         return Manager::GetSingleton()->GetCustomSkillBonusForActorID(static_cast<RE::FormID>(actorFormID), skillId.c_str());
+    }
+
+    void ModCustomSkillLevelForActor(RE::StaticFunctionTag*, int actorFormID, RE::BSFixedString skillId, int amount) {
+        Manager::GetSingleton()->ModCustomSkillLevelForActorID(static_cast<RE::FormID>(actorFormID), skillId.c_str(), amount);
+    }
+
+    void SetCustomSkillLevelForActor(RE::StaticFunctionTag*, int actorFormID, RE::BSFixedString skillId, int level) {
+        Manager::GetSingleton()->SetCustomSkillLevelForActorID(static_cast<RE::FormID>(actorFormID), skillId.c_str(), level);
     }
 
     void ModCustomSkillBonusForActor(RE::StaticFunctionTag*, int actorFormID, RE::BSFixedString skillId, int amount) {
@@ -332,6 +347,8 @@ namespace PapyrusAPI {
         vm->RegisterFunction("GetCustomSkillXPForActor", "NewSkillMenu", GetCustomSkillXPForActor);
         vm->RegisterFunction("GetCustomSkillTotalLevelForActor", "NewSkillMenu", GetCustomSkillTotalLevelForActor);
         vm->RegisterFunction("GetCustomSkillBonusForActor", "NewSkillMenu", GetCustomSkillBonusForActor);
+        vm->RegisterFunction("ModCustomSkillLevelForActor", "NewSkillMenu", ModCustomSkillLevelForActor);
+        vm->RegisterFunction("SetCustomSkillLevelForActor", "NewSkillMenu", SetCustomSkillLevelForActor);
         vm->RegisterFunction("ModCustomSkillBonusForActor", "NewSkillMenu", ModCustomSkillBonusForActor);
         vm->RegisterFunction("SetCustomSkillBonusForActor", "NewSkillMenu", SetCustomSkillBonusForActor);
         vm->RegisterFunction("HasCustomPerkForActor", "NewSkillMenu", HasCustomPerkForActor);
@@ -435,6 +452,7 @@ namespace {
 
 void OnMessage(SKSE::MessagingInterface::Message* message) {
     if (message->type == SKSE::MessagingInterface::kPostLoad) {
+        ModMenu::Register();
         hasDFG = GetModuleHandleA("DynamicFormsGenerator.dll") != nullptr;
         if (hasDFG) {
             logger::info("DynamicFormsGenerator.dll found");

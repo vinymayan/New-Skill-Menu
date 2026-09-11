@@ -229,6 +229,7 @@ void Manager::PopulateList(const std::string& a_typeName, std::function<bool(T*)
 
             // A conversão UTF-8 é um ponto comum de falha se a string estiver corrompida
             info.name = ToUTF8(rawName);
+            info.UpdateDisplayName();
 
             // NOVO: Pegar a Descrição e o Próximo Perk (se for BGSPerk)
             info.description = "";
@@ -691,6 +692,22 @@ void Manager::QueuePendingLevelUps(RE::Actor* actor, int amount) {
     state.lastObservedLevel = std::max(state.lastObservedLevel, static_cast<int>(actor->GetLevel()));
 }
 
+void Manager::QueuePendingLevelUpsThrough(RE::Actor* actor, int targetLevel) {
+    if (!actor) return;
+    auto& state = EnsureActorProgress(actor);
+    targetLevel = std::clamp(targetLevel, 1, 10000);
+    if (targetLevel <= state.lastObservedLevel) return;
+    state.pendingLevelUps = std::clamp(
+        state.pendingLevelUps + targetLevel - state.lastObservedLevel,
+        0,
+        10000);
+    state.lastObservedLevel = targetLevel;
+}
+
+int Manager::GetFirstPendingLevel(RE::Actor* actor) {
+    return actor ? std::max(1, EnsureActorProgress(actor).highestRewardedLevel + 1) : 1;
+}
+
 void Manager::ConsumePendingLevelUps(RE::Actor* actor, int amount) {
     if (!actor || amount <= 0) return;
     auto& state = EnsureActorProgress(actor);
@@ -797,6 +814,26 @@ int Manager::GetCustomSkillTotalLevelForActorID(RE::FormID actorFormID, const st
 
 int Manager::GetCustomSkillBonusForActorID(RE::FormID actorFormID, const std::string& skillId) {
     return GetCustomSkillBonus(ResolveActorFromFormID(actorFormID), skillId);
+}
+
+void Manager::ModCustomSkillLevelForActorID(RE::FormID actorFormID, const std::string& skillId, int amount) {
+    auto actor = ResolveActorFromFormID(actorFormID);
+    if (!actor || skillId.empty()) return;
+
+    const auto nextLevel = std::clamp<std::int64_t>(
+        static_cast<std::int64_t>(GetCustomSkillLevel(actor, skillId)) + amount,
+        0,
+        std::numeric_limits<int>::max());
+    SetCustomSkillLevel(actor, skillId, static_cast<int>(nextLevel));
+    Prisma::SendUpdateToUI();
+}
+
+void Manager::SetCustomSkillLevelForActorID(RE::FormID actorFormID, const std::string& skillId, int level) {
+    auto actor = ResolveActorFromFormID(actorFormID);
+    if (!actor || skillId.empty()) return;
+
+    SetCustomSkillLevel(actor, skillId, std::max(0, level));
+    Prisma::SendUpdateToUI();
 }
 
 void Manager::ModCustomSkillBonusForActorID(RE::FormID actorFormID, const std::string& skillId, int amount) {

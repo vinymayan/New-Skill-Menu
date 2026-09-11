@@ -82,3 +82,9 @@ Bool Function ModActorResource(Int actorFormID, String resourceId, Float amount)
 
 ; Returns the IDs accepted by AddCustomSkillXP and its actor-aware variant.
 String[] Function GetAvailableSkills() Global Native
+
+; Adiciona ou subtrai do nível BASE. O valor final não fica abaixo de zero.
+Function ModCustomSkillLevelForActor(Int actorFormID, String skillId, Int amount) Global Native
+
+; Define o nível BASE diretamente. Valores negativos são limitados a zero.
+Function SetCustomSkillLevelForActor(Int actorFormID, String skillId, Int level) Global Native

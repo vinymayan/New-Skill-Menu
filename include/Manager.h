@@ -19,6 +19,12 @@ struct InternalFormInfo {
     std::string formType;
     std::string description; 
     std::string nextPerkId;  
+    std::string cachedDisplayName;
+
+    void UpdateDisplayName() {
+        const auto& base = !name.empty() ? name : (!editorID.empty() ? editorID : "Unknown");
+        cachedDisplayName = std::format("{} [{:08X}]", base, formID);
+    }
 
     // Helper for UI
     std::string GetDisplayName() const {
@@ -75,6 +81,8 @@ public:
     float GetCustomSkillXPForActorID(RE::FormID actorFormID, const std::string& skillId);
     int GetCustomSkillTotalLevelForActorID(RE::FormID actorFormID, const std::string& skillId);
     int GetCustomSkillBonusForActorID(RE::FormID actorFormID, const std::string& skillId);
+    void ModCustomSkillLevelForActorID(RE::FormID actorFormID, const std::string& skillId, int amount);
+    void SetCustomSkillLevelForActorID(RE::FormID actorFormID, const std::string& skillId, int level);
     void ModCustomSkillBonusForActorID(RE::FormID actorFormID, const std::string& skillId, int amount);
     void SetCustomSkillBonusForActorID(RE::FormID actorFormID, const std::string& skillId, int amount);
     bool HasCustomPerkForActorID(RE::FormID actorFormID, const std::string& perkId);
@@ -98,6 +106,8 @@ public:
     void ModActorPerkPoints(RE::Actor* actor, int amount, int maximum = 1000000);
     int GetPendingLevelUps(RE::Actor* actor);
     void QueuePendingLevelUps(RE::Actor* actor, int amount);
+    void QueuePendingLevelUpsThrough(RE::Actor* actor, int targetLevel);
+    int GetFirstPendingLevel(RE::Actor* actor);
     void ConsumePendingLevelUps(RE::Actor* actor, int amount);
     void RecordPurchasedPerk(
         RE::Actor* actor,

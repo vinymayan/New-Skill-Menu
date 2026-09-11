@@ -24,6 +24,33 @@ interface UISettings {
     columnPreviewMode?: 'full' | 'bg' | 'tree' | 'none';
     enableEditorMode: boolean;
     hidePerkNames: boolean;
+    normalTextSizePercent?: number;
+    headerTextSizePercent?: number;
+    carouselTextSizePercent?: number;
+    treeTitleTextSizePercent?: number;
+    perkTitleTextSizePercent?: number;
+    perkTextSizePercent?: number;
+    bottomTextSizePercent?: number;
+    editorTextSizePercent?: number;
+    editorButtonScalePercent?: number;
+    barWidthPercent?: number;
+    barHeightPercent?: number;
+    popupMinWidthPixels?: number;
+    popupMaxWidthPixels?: number;
+    popupPaddingPixels?: number;
+    levelUpModalWidthPercent?: number;
+    levelUpModalHeightPercent?: number;
+    levelUpTitleSizePercent?: number;
+    levelUpTextSizePercent?: number;
+    levelUpButtonScalePercent?: number;
+    levelUpSpacingPercent?: number;
+    primaryTextColor?: number[];
+    secondaryTextColor?: number[];
+    accentColor?: number[];
+    lockedTextColor?: number[];
+    successColor?: number[];
+    dangerColor?: number[];
+    backgroundColor?: number[];
 }
 interface AvailablePerk {
     id: string;
@@ -38,6 +65,8 @@ interface CustomResource {
     name: string;
     glob: string;
     actorValue?: string;
+    npcUsesActorValue?: boolean;
+    npcActorValue?: string;
     isDefault?: boolean;
 }
 
@@ -117,6 +146,7 @@ interface PlayerData {
     race?: string;
     dragonSouls?: number;
     pendingLevelUps?: number;
+    firstPendingLevel?: number;
     isLevelUpMenuOpen?: boolean;
     resourceValues?: Record<string, number>;
     resetPreview?: ResetPreview;
@@ -211,6 +241,131 @@ function resolveText(text: string | undefined, isEditor: boolean): string {
     });
 }
 
+function isTreeLocked(tree: SkillTreeData | undefined): boolean {
+    return tree?.treeRequirements?.some(req => req.isMet === false) ?? false;
+}
+
+function percentScale(value: number | undefined): number {
+    const numeric = Number(value);
+    return Math.min(200, Math.max(50, Number.isFinite(numeric) ? numeric : 100)) / 100;
+}
+
+function rgba(color: number[] | undefined, fallback: number[]): string {
+    const source = Array.isArray(color) && color.length === 4 ? color : fallback;
+    const channel = (value: number) => Math.round(Math.min(1, Math.max(0, Number(value) || 0)) * 255);
+    const alpha = Math.min(1, Math.max(0, Number(source[3]) || 0));
+    return `rgba(${channel(source[0])}, ${channel(source[1])}, ${channel(source[2])}, ${alpha})`;
+}
+
+function getUIStyle(settings: UISettings | null): React.CSSProperties {
+    const normal = percentScale(settings?.normalTextSizePercent);
+    const header = percentScale(settings?.headerTextSizePercent);
+    const carousel = percentScale(settings?.carouselTextSizePercent);
+    const perkTitle = percentScale(settings?.perkTitleTextSizePercent);
+    const bottom = percentScale(settings?.bottomTextSizePercent);
+    const editor = percentScale(settings?.editorTextSizePercent);
+    const editorButtons = percentScale(settings?.editorButtonScalePercent);
+    const barWidth = percentScale(settings?.barWidthPercent);
+    const barHeight = percentScale(settings?.barHeightPercent);
+    const popupMin = Math.min(800, Math.max(180, settings?.popupMinWidthPixels ?? 300));
+    const popupMax = Math.max(popupMin, Math.min(1200, Math.max(240, settings?.popupMaxWidthPixels ?? 520)));
+    const popupPadding = Math.min(64, Math.max(4, settings?.popupPaddingPixels ?? 16));
+    const levelUpWidth = Math.min(95, Math.max(50, settings?.levelUpModalWidthPercent ?? 82));
+    const levelUpHeight = Math.min(95, Math.max(50, settings?.levelUpModalHeightPercent ?? 86));
+    const levelUpTitle = percentScale(settings?.levelUpTitleSizePercent ?? 125);
+    const levelUpText = percentScale(settings?.levelUpTextSizePercent ?? 115);
+    const levelUpButtons = percentScale(settings?.levelUpButtonScalePercent ?? 120);
+    const levelUpSpacing = percentScale(settings?.levelUpSpacingPercent ?? 120);
+    return {
+        '--nsm-normal-font-size': `${normal}rem`,
+        '--nsm-header-font-size': `${0.9 * header}rem`,
+        '--nsm-header-label-font-size': `${0.75 * header}rem`,
+        '--nsm-header-value-font-size': `${1.1 * header}rem`,
+        '--nsm-stat-font-size': `${0.85 * header}rem`,
+        '--nsm-carousel-name-font-size': `${1.5 * carousel}rem`,
+        '--nsm-carousel-level-font-size': `${2.5 * carousel}rem`,
+        '--nsm-tree-title-font-size': `${3 * percentScale(settings?.treeTitleTextSizePercent)}rem`,
+        '--nsm-perk-title-font-size': `${1.4 * perkTitle}rem`,
+        '--nsm-perk-label-font-size': `${0.85 * perkTitle}rem`,
+        '--nsm-perk-label-active-font-size': `${0.95 * perkTitle}rem`,
+        '--nsm-perk-text-font-size': `${percentScale(settings?.perkTextSizePercent)}rem`,
+        '--nsm-bottom-name-font-size': `${0.75 * bottom}rem`,
+        '--nsm-bottom-level-font-size': `${1.1 * bottom}rem`,
+        '--nsm-editor-font-size': `${editor}rem`,
+        '--nsm-editor-button-font-size': `${editor * editorButtons}rem`,
+        '--nsm-editor-button-padding-y': `${10 * editorButtons}px`,
+        '--nsm-editor-button-padding-x': `${20 * editorButtons}px`,
+        '--nsm-main-bar-width': `${300 * barWidth}px`,
+        '--nsm-main-bar-height': `${20 * barHeight}px`,
+        '--nsm-mini-bar-width': `${120 * barWidth}px`,
+        '--nsm-mini-bar-height': `${12 * barHeight}px`,
+        '--nsm-level-bar-width': `${100 * barWidth}px`,
+        '--nsm-level-bar-height': `${12 * barHeight}px`,
+        '--nsm-main-bar-inset': `${28 * barWidth}px`,
+        '--nsm-mini-bar-inset': `${11 * barWidth}px`,
+        '--nsm-level-bar-inset': `${9 * barWidth}px`,
+        '--nsm-popup-min-width': `${popupMin}px`,
+        '--nsm-popup-max-width': `${popupMax}px`,
+        '--nsm-popup-padding': `${popupPadding}px`,
+        '--nsm-level-up-modal-width': `${levelUpWidth}vw`,
+        '--nsm-level-up-modal-height': `${levelUpHeight}vh`,
+        '--nsm-level-up-title-font-size': `${2.2 * levelUpTitle}rem`,
+        '--nsm-level-up-text-font-size': `${levelUpText}rem`,
+        '--nsm-level-up-section-font-size': `${1.15 * levelUpText}rem`,
+        '--nsm-level-up-card-name-font-size': `${0.9 * levelUpText}rem`,
+        '--nsm-level-up-card-level-font-size': `${1.25 * levelUpText}rem`,
+        '--nsm-level-up-button-font-size': `${levelUpButtons}rem`,
+        '--nsm-level-up-button-size': `${34 * levelUpButtons}px`,
+        '--nsm-level-up-space-1': `${8 * levelUpSpacing}px`,
+        '--nsm-level-up-space-2': `${14 * levelUpSpacing}px`,
+        '--nsm-level-up-space-3': `${22 * levelUpSpacing}px`,
+        '--nsm-primary-text': rgba(settings?.primaryTextColor, [1, 1, 1, 1]),
+        '--nsm-secondary-text': rgba(settings?.secondaryTextColor, [0.8, 0.8, 0.8, 1]),
+        '--nsm-accent': rgba(settings?.accentColor, [0.302, 0.816, 0.882, 1]),
+        '--nsm-locked-text': rgba(settings?.lockedTextColor, [0.667, 0.667, 0.667, 1]),
+        '--nsm-success': rgba(settings?.successColor, [0.298, 0.686, 0.314, 1]),
+        '--nsm-danger': rgba(settings?.dangerColor, [1, 0.322, 0.322, 1]),
+        '--nsm-background': rgba(settings?.backgroundColor, [0, 0, 0, 0.6])
+    } as React.CSSProperties;
+}
+
+const LockIcon = ({ className = '' }: { className?: string }) => (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden="true">
+        <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6zm9 14H6V10h12v10zm-6-3c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z" />
+    </svg>
+);
+
+const LockedTreeNotice = ({ treeData, formLists, className = '' }: {
+    treeData: SkillTreeData,
+    formLists?: Record<string, AvailablePerk[]>,
+    className?: string
+}) => {
+    const resolveReqValue = (req: Requirement) => {
+        if (formLists && formLists[req.type]) {
+            return formLists[req.type].find(item => item.id === req.value)?.name || req.value;
+        }
+        return req.value;
+    };
+
+    return (
+        <div className={`locked-tree-overlay ${className}`} role="status">
+            <LockIcon className="lock-icon" />
+            <h3>{t('reqs.locked_tree_title')}</h3>
+            <ul className="locked-req-list">
+                {treeData.treeRequirements.map((req, idx) => (
+                    <li key={idx} className={req.isMet ? 'req-met' : 'req-unmet'}>
+                        {req.isNot && <span style={{ color: '#f44336', fontWeight: 'bold', marginRight: '5px' }}>[NOT] </span>}
+                        {t(`reqs.${req.type}`, {
+                            val: resolveReqValue(req),
+                            target: resolveText(req.target || treeData.displayName || treeData.name, false)
+                        })}
+                    </li>
+                ))}
+            </ul>
+        </div>
+    );
+};
+
 // === DROPDOWN CUSTOMIZADO ===
 const CustomSelect = ({
     options,
@@ -254,29 +409,26 @@ const CustomSelect = ({
     );
 
     return (
-        <div ref={dropdownRef} className="skyrim-select-container" style={{ width: width, position: 'relative' }}>
+        <div ref={dropdownRef} className="skyrim-select-container" style={{ width }}>
             <button
                 type="button"
-                className="skyrim-dropdown form-selector-trigger-btn"
-                style={{ width: '100%', textAlign: 'left', padding: '5px', margin: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                className={`skyrim-dropdown form-selector-trigger-btn custom-select-trigger ${isOpen ? 'is-open' : ''}`}
+                aria-haspopup="listbox"
+                aria-expanded={isOpen}
                 onClick={(e) => {
                     e.preventDefault();
                     setIsOpen(!isOpen);
                     if (!isOpen) setSearchTerm(""); // Limpa a busca ao abrir
                 }}
             >
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayLabel}</span>
-                <span style={{ fontSize: '0.8rem', marginLeft: '5px', opacity: 0.7 }}>▼</span>
+                <span className="custom-select-value">{displayLabel}</span>
+                <svg className="custom-select-chevron" viewBox="0 0 16 10" aria-hidden="true">
+                    <path d="M2 2l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
             </button>
 
             {isOpen && (
-                <div style={{
-                    position: "absolute", top: "100%", left: 0, width: "100%", minWidth: "150px",
-                    background: "rgba(0,0,0,0.95)", border: "1px solid #777",
-                    zIndex: 9999, maxHeight: "200px", overflowY: "auto",
-                    display: "flex", flexDirection: "column", padding: "5px",
-                    boxShadow: "0 4px 6px rgba(0,0,0,0.5)"
-                }}>
+                <div className="custom-select-menu" role="listbox">
                     {/* O input de pesquisa agora aparece sempre, sem checar options.length ou disableSearch */}
                     <input
                         type="text"
@@ -293,12 +445,9 @@ const CustomSelect = ({
                         filteredOptions.map((opt, i) => (
                             <button
                                 key={i}
-                                className="sl-action-btn"
-                                style={{
-                                    textAlign: "left", padding: "8px", margin: "2px 0", border: "none",
-                                    background: String(opt.value) === String(value) ? 'rgba(255, 255, 255, 0.2)' : 'transparent',
-                                    color: String(opt.value) === String(value) ? '#ff9800' : 'white'
-                                }}
+                                className={`sl-action-btn custom-select-option ${String(opt.value) === String(value) ? 'is-selected' : ''}`}
+                                role="option"
+                                aria-selected={String(opt.value) === String(value)}
                                 onClick={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
@@ -1065,7 +1214,7 @@ const PlayerHeader = ({ player, actors, customResources, onActorSelect }: {
                         }))}
                         value={player.id}
                         onChange={(value) => onActorSelect(String(value))}
-                        width="210px"
+                        width="clamp(130px, 14vw, 240px)"
                         disableSearch={actors.length < 6}
                     />
                 </div>
@@ -1099,7 +1248,7 @@ const PlayerHeader = ({ player, actors, customResources, onActorSelect }: {
                             </div>
                             {customResources && customResources.map(res => (
                                 <div key={res.id} className="resource-item">
-                                    <span>{resolveText(res.name, false)}{res.glob ? ' (Shared)' : ''}</span>
+                                    <span>{resolveText(res.name, false)}{res.glob && !(player.kind === 'follower' && res.npcUsesActorValue) ? ' (Shared)' : ''}</span>
                                     <span>{player.resourceValues?.[res.id] || 0}</span>
                                 </div>
                             ))}
@@ -1977,6 +2126,36 @@ const SettingsModal = ({ settings, rules, selectedActor, customResources, formLi
                                         />
                                     </label>
 
+                                    {Boolean(res.glob) && (
+                                        <>
+                                            <label>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={res.npcUsesActorValue ?? false}
+                                                    onChange={e => {
+                                                        const r = [...resourcesData];
+                                                        r[idx].npcUsesActorValue = e.target.checked;
+                                                        setResourcesData(r);
+                                                    }}
+                                                />
+                                                {t('settings.resources.npc_uses_actor_value', { defaultValue: 'NPCs use Actor Value' })}
+                                            </label>
+                                            {res.npcUsesActorValue && (
+                                                <label>{t('settings.resources.npc_actor_value', { defaultValue: 'NPC Actor Value' })}
+                                                    <input
+                                                        type="text"
+                                                        value={res.npcActorValue || ""}
+                                                        onChange={e => {
+                                                            const r = [...resourcesData];
+                                                            r[idx].npcActorValue = e.target.value;
+                                                            setResourcesData(r);
+                                                        }}
+                                                    />
+                                                </label>
+                                            )}
+                                        </>
+                                    )}
+
                                     <button className="delete-btn" style={{ gridColumn: 'span 2' }} onClick={() => {
                                         if (window.confirm(t('settings.resources.delete_confirm', { defaultValue: 'Remover este recurso permanentemente?' }))) {
                                             onDeleteResource(res.id);
@@ -1985,7 +2164,7 @@ const SettingsModal = ({ settings, rules, selectedActor, customResources, formLi
                                     }}>{t('common.delete')}</button>
                                 </div>
                             ))}
-                            <button className="add-btn" onClick={() => setResourcesData([...resourcesData, { id: `res_${Date.now()}`, name: 'New Resource', glob: '', actorValue: '' }])}>{t('settings.resources.add_btn', { defaultValue: 'Adicionar Recurso' })}</button>
+                            <button className="add-btn" onClick={() => setResourcesData([...resourcesData, { id: `res_${Date.now()}`, name: 'New Resource', glob: '', actorValue: '', npcUsesActorValue: false, npcActorValue: '' }])}>{t('settings.resources.add_btn', { defaultValue: 'Adicionar Recurso' })}</button>
                         </div>
                     )}
 
@@ -2072,8 +2251,10 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
         playerData: PlayerData | null, 
         customResources: CustomResource[] 
     }) => {
-    const detailBg = useValidImage(treeData.bgPath, DEFAULT_BG);
+    const resolvedDetailBg = useValidImage(treeData.bgPath, DEFAULT_BG);
     const treeColor = treeData.color || DEFAULT_COLOR;
+    const isLocked = !isEditorMode && isTreeLocked(treeData);
+    const detailBg = isLocked && (uiSettings?.hideLockedTreeBG ?? false) ? DEFAULT_BG : resolvedDetailBg;
     const [treeBounds, setTreeBounds] = useState({ minX: 0, maxX: 100, minY: 0, maxY: 100 });
     const containerRef = useRef<HTMLDivElement>(null);
     const { width: containerWidth, height: containerHeight } = useElementSize(containerRef);
@@ -2104,6 +2285,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
     const canLegendary = isLegendaryEnabled && treeData.currentLevel >= hardCap;
     const resetLevel = treeData.initialLevel || 15;
     const resolvedTreeName = resolveText(treeData.displayName || treeData.name, isEditorMode);
+    const displayTreeName = isLocked && (uiSettings?.hideLockedTreeNames ?? true) ? "????" : resolvedTreeName;
 
     useEffect(() => {
         // Mantemos apenas o cálculo dos limites para o Canvas não "cortar" os ícones
@@ -2441,7 +2623,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                     </div>
                 )}
 
-                {canLegendary && !isEditorMode && (
+                {canLegendary && !isEditorMode && !isLocked && (
                     <div
                         className="legendary-btn-container"
                         onClick={() => onLegendary && onLegendary(treeData.name)}
@@ -2451,13 +2633,17 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                         <span className="legendary-text">{t('legendary.btn_text')}</span>
                     </div>
                 )}
-                <h1>{resolvedTreeName.toUpperCase()}</h1>
+                <h1>{displayTreeName.toUpperCase()}</h1>
                 <div className="tree-divider"></div>
             </div>
 
+            {isLocked && (
+                <LockedTreeNotice treeData={treeData} formLists={formLists} className="detail-locked-tree-overlay" />
+            )}
+
             {/* OTIMIZAÇÃO: Layering Equivalente ao Konva. willChange: 'transform' aplica compositing dedicado,
                 libertando o thread principal e agilizando as transformações na GPU. */}
-            <div className={`zoom-container ${isDraggingCanvas ? 'dragging' : ''}`}
+            {!isLocked && <div className={`zoom-container ${isDraggingCanvas ? 'dragging' : ''}`}
                 ref={containerRef}
                 onMouseDown={handleCanvasMouseDown}
                 onMouseMove={handleCanvasMouseMove}
@@ -2570,7 +2756,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                                     }
                                 </div>
                             )}
-                            <p className="perk-desc" style={{ color: currentData.isUnlocked ? '#66bb6a' : '#ccc' }}>{displayDesc}</p>
+                            <p className="perk-desc" style={{ color: currentData.isUnlocked ? 'var(--nsm-success)' : 'var(--nsm-secondary-text)' }}>{displayDesc}</p>
 
                             {currentData.requirements && currentData.requirements.length > 0 && (
                                 <div className="perk-reqs">
@@ -2617,7 +2803,7 @@ const SingleSkillTreeSlide = memo(({ treeData, isEditorMode,
                         </div>
                     );
                 })()}
-            </div>
+            </div>}
 
             {contextMenu && isEditorMode && (
                 <div className="perk-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={e => e.stopPropagation()}>
@@ -2705,6 +2891,13 @@ const SkillTreeDetail = ({
             if (!['w', 'a', 's', 'd', 'enter', 'e'].includes(key)) return;
 
             const currentTree = trees[currentIndex];
+            if (isTreeLocked(currentTree)) {
+                setKeyboardNodeId(null);
+                if (key === 's') onClose();
+                if (key === 'a' && emblaApi) emblaApi.scrollPrev();
+                if (key === 'd' && emblaApi) emblaApi.scrollNext();
+                return;
+            }
             if (!currentTree || currentTree.nodes.length === 0) {
                 if (key === 's') onClose();
                 if (key === 'a' && emblaApi) emblaApi.scrollPrev();
@@ -2880,7 +3073,7 @@ const SkillColumn = memo(({ treeData, uiSettings, globalSettings: _globalSetting
     const resolvedTreeBG = useValidImage(treeData.bgPath, DEFAULT_BG);
     const treeColor = treeData.color || DEFAULT_COLOR;
 
-    const isLocked = treeData.treeRequirements && treeData.treeRequirements.some(req => req.isMet === false);
+    const isLocked = isTreeLocked(treeData);
     const hideName = isLocked && (uiSettings?.hideLockedTreeNames ?? true);
     const shouldForceDefaultBG = isLocked && (uiSettings?.hideLockedTreeBG ?? false);
     const bgImage = shouldForceDefaultBG ? DEFAULT_BG : resolvedTreeBG;
@@ -2894,23 +3087,15 @@ const SkillColumn = memo(({ treeData, uiSettings, globalSettings: _globalSetting
     const displayTreeName = hideName ? "????" : resolvedTreeName.toUpperCase();
 
     const handleClick = useCallback(() => {
-        if (!isLocked || isEditorMode)
-            playSound('UISkillsForwardSD');
+        playSound('UISkillsForwardSD');
         onSelect(treeData.name);
-    }, [onSelect, treeData.name, isLocked, isEditorMode]);
+    }, [onSelect, treeData.name]);
 
     const handleMouseUp = useCallback((e: React.MouseEvent) => {
         if (e.button === 2) {
             onContextMenu(e, treeData.name);
         }
     }, [onContextMenu, treeData.name]);
-
-    const resolveReqValue = (req: Requirement) => {
-        if (formLists && formLists[req.type]) {
-            return formLists[req.type].find(item => item.id === req.value)?.name || req.value;
-        }
-        return req.value;
-    };
 
     const handleMouseEnter = () => {
         playSound('UIMenuFocus');
@@ -2940,24 +3125,7 @@ const SkillColumn = memo(({ treeData, uiSettings, globalSettings: _globalSetting
             <div className="column-text-gradient" />
 
             {isLocked && (
-                <div className="locked-tree-overlay">
-                    <svg viewBox="0 0 24 24" className="lock-icon" fill="currentColor" style={{ pointerEvents: 'none' }}>
-                        <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6zm9 14H6V10h12v10zm-6-3c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z" />
-                    </svg>
-                    <h3>{t('reqs.locked_tree_title')}</h3>
-                    <ul className="locked-req-list">
-                        {treeData.treeRequirements.map((req, idx) => (
-                            <li key={idx} className={req.isMet ? 'req-met' : 'req-unmet'}>
-                                {req.isNot && <span style={{ color: '#f44336', fontWeight: 'bold', marginRight: '5px' }}>[NOT] </span>}
-
-                                {t(`reqs.${req.type}`, {
-                                    val: resolveReqValue(req),
-                                    target: resolveText(req.target || treeData.displayName || treeData.name, false)
-                                })}
-                            </li>
-                        ))}
-                    </ul>
-                </div>
+                <LockedTreeNotice treeData={treeData} formLists={formLists} />
             )}
 
             <div className="column-content">
@@ -3028,7 +3196,7 @@ const BottomSkillGrid = ({ trees, uiSettings, onHoverSkill, onClickSkill, onCont
             onMouseLeave={handleMouseLeave}
         >
             {trees.map((tree, index) => {
-                const isLocked = tree.treeRequirements && tree.treeRequirements.some(req => req.isMet === false);
+                const isLocked = isTreeLocked(tree);
                 const hideName = isLocked && (uiSettings?.hideLockedTreeNames ?? true);
 
                 const resolvedTreeName = resolveText(tree.displayName || tree.name, isEditorMode);
@@ -3043,7 +3211,7 @@ const BottomSkillGrid = ({ trees, uiSettings, onHoverSkill, onClickSkill, onCont
                                 e.stopPropagation();
                                 return;
                             }
-                            if (!isLocked || isEditorMode) onClickSkill(tree.name);
+                            onClickSkill(tree.name);
                         }}
                         onContextMenu={e => e.preventDefault()}
                         onMouseUp={(e) => {
@@ -3052,7 +3220,10 @@ const BottomSkillGrid = ({ trees, uiSettings, onHoverSkill, onClickSkill, onCont
                         }}
                     >
                         <div className="bottom-grid-info">
-                            <span className="grid-skill-name">{displayTreeName} {isLocked && '🔒'}</span>
+                            <span className="grid-skill-name">
+                                {displayTreeName}
+                                {isLocked && <LockIcon className="inline-lock-icon" />}
+                            </span>
                             {!isLocked && <span className="grid-skill-level">{tree.currentLevel}</span>}
                         </div>
                         {!isLocked && (
@@ -3068,16 +3239,22 @@ const BottomSkillGrid = ({ trees, uiSettings, onHoverSkill, onClickSkill, onCont
     );
 };
 
-const LevelUpModal = ({ trees, settings, rules, actor, currentLevel, pendingLevelUps, onSelect }: {
+const LevelUpModal = ({ trees, settings, rules, uiSettings, actor, actors, currentLevel, firstPendingLevel, pendingLevelUps, onSelect, onActorSelect }: {
     trees: SkillTreeData[], settings: SettingsData,
     rules: LevelRule[],
+    uiSettings: UISettings | null,
     actor: PlayerData,
-    currentLevel: number, pendingLevelUps: number, onSelect: (payload: any) => void
+    actors: ActorSummary[],
+    currentLevel: number, firstPendingLevel?: number, pendingLevelUps: number,
+    onSelect: (payload: any) => void,
+    onActorSelect: (actorId: string) => void
 }) => {
     const [allocations, setAllocations] = useState<Record<string, number>>({});
     const [selectedAttributes, setSelectedAttributes] = useState<Record<number, string>>({});
     const [activeCategory, setActiveCategory] = useState<string>("All");
+    const [attributePage, setAttributePage] = useState(0);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [switchingActorId, setSwitchingActorId] = useState<string | null>(null);
 
     const categories = settings?.categories || ["All", "Combat", "Magic", "Stealth", "Special", "Custom"];
 
@@ -3088,9 +3265,9 @@ const LevelUpModal = ({ trees, settings, rules, actor, currentLevel, pendingLeve
         let maxSpend = 0;
         let maxCap = 100;
 
-        const startLevel = actor.kind === 'follower' ?
+        const startLevel = firstPendingLevel || (actor.kind === 'follower' ?
             Math.max(1, currentLevel - pendingLevelUps + 1) :
-            currentLevel + 1;
+            currentLevel + 1);
         const endLevel = startLevel + pendingLevelUps - 1;
 
         for (let l = startLevel; l <= endLevel; l++) {
@@ -3109,13 +3286,14 @@ const LevelUpModal = ({ trees, settings, rules, actor, currentLevel, pendingLeve
             totalMaxSpendable: maxSpend,
             currentCapEffective: currentEff
         };
-    }, [currentLevel, pendingLevelUps, settings, rules, actor]);
+    }, [currentLevel, firstPendingLevel, pendingLevelUps, settings, rules, actor]);
 
     const totalSpent = Object.values(allocations).reduce((a, b) => a + b, 0);
     const maxAllowed = Math.min(totalSkillPoints, totalMaxSpendable);
     const pointsRemaining = maxAllowed - totalSpent;
 
     const addPoint = (tree: SkillTreeData) => {
+        if (isTreeLocked(tree)) return;
         const skillName = tree.name;
         const current = tree.currentLevel;
         const allocated = allocations[skillName] || 0;
@@ -3133,12 +3311,24 @@ const LevelUpModal = ({ trees, settings, rules, actor, currentLevel, pendingLeve
     };
 
     const canConfirm = levelsToProcess.every(l => selectedAttributes[l.level]);
+    const attributePageSize = 8;
+    const attributePageCount = Math.max(1, Math.ceil(levelsToProcess.length / attributePageSize));
+    const visibleLevels = levelsToProcess.slice(
+        attributePage * attributePageSize,
+        (attributePage + 1) * attributePageSize
+    );
+    const selectedAttributeCount = levelsToProcess.filter(l => selectedAttributes[l.level]).length;
+
+    useEffect(() => {
+        setAttributePage(page => Math.min(page, attributePageCount - 1));
+    }, [attributePageCount]);
 
     const handleConfirm = () => {
         if (!canConfirm || isProcessing) return;
 
         setIsProcessing(true);
         onSelect({
+            actorId: actor.id,
             levelUps: levelsToProcess.map(l => ({
                 level: l.level,
                 attribute: selectedAttributes[l.level]
@@ -3155,13 +3345,136 @@ const LevelUpModal = ({ trees, settings, rules, actor, currentLevel, pendingLeve
         return availableTrees;
     }, [trees, activeCategory]);
 
+    const levelUpActors = useMemo(() => {
+        const pending = actors.filter(candidate => (candidate.pendingLevelUps || 0) > 0);
+        if (pending.some(candidate => candidate.id === actor.id) || pendingLevelUps <= 0) return pending;
+        return [{
+            id: actor.id,
+            ruleKey: actor.ruleKey || '',
+            name: actor.name,
+            race: actor.race || '',
+            level: currentLevel,
+            kind: actor.kind || 'player',
+            pendingLevelUps
+        }, ...pending];
+    }, [actors, actor, currentLevel, pendingLevelUps]);
+
+    const handleLevelUpActorSelect = (actorId: string) => {
+        if (actorId === actor.id || switchingActorId || isProcessing) return;
+        setSwitchingActorId(actorId);
+        onActorSelect(actorId);
+    };
+
+    useEffect(() => {
+        const getActions = () => Array.from(
+            document.querySelectorAll<HTMLButtonElement>('.level-up-modal-advanced [data-level-up-action]:not(:disabled)')
+        );
+
+        const focusFirstAction = window.requestAnimationFrame(() => getActions()[0]?.focus());
+        const handleLevelUpKey = (event: KeyboardEvent) => {
+            const key = event.key.toLowerCase();
+            if (key === 'enter') {
+                const actions = getActions();
+                const current = document.activeElement as HTMLButtonElement | null;
+                const target = current && actions.includes(current) ? current : actions[0];
+                if (target) {
+                    event.preventDefault();
+                    target.focus();
+                    target.click();
+                }
+                return;
+            }
+
+            const directions: Record<string, { x: number; y: number }> = {
+                w: { x: 0, y: -1 }, arrowup: { x: 0, y: -1 },
+                s: { x: 0, y: 1 }, arrowdown: { x: 0, y: 1 },
+                a: { x: -1, y: 0 }, arrowleft: { x: -1, y: 0 },
+                d: { x: 1, y: 0 }, arrowright: { x: 1, y: 0 }
+            };
+            const direction = directions[key];
+            if (!direction) return;
+
+            const actions = getActions();
+            if (!actions.length) return;
+            event.preventDefault();
+
+            const current = document.activeElement as HTMLButtonElement | null;
+            if (!current || !actions.includes(current)) {
+                actions[0].focus();
+                return;
+            }
+
+            const from = current.getBoundingClientRect();
+            const fromX = from.left + from.width / 2;
+            const fromY = from.top + from.height / 2;
+            let best: HTMLButtonElement | null = null;
+            let bestScore = Number.POSITIVE_INFINITY;
+
+            for (const candidate of actions) {
+                if (candidate === current) continue;
+                const rect = candidate.getBoundingClientRect();
+                const dx = rect.left + rect.width / 2 - fromX;
+                const dy = rect.top + rect.height / 2 - fromY;
+                const primary = direction.x ? dx * direction.x : dy * direction.y;
+                if (primary <= 1) continue;
+                const secondary = direction.x ? Math.abs(dy) : Math.abs(dx);
+                const score = primary + secondary * 2;
+                if (score < bestScore) {
+                    best = candidate;
+                    bestScore = score;
+                }
+            }
+
+            if (best) {
+                best.focus();
+                best.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+            }
+        };
+
+        window.addEventListener('keydown', handleLevelUpKey);
+        return () => {
+            window.cancelAnimationFrame(focusFirstAction);
+            window.removeEventListener('keydown', handleLevelUpKey);
+        };
+    }, []);
+
     return (
         <div className="skyrim-modal-overlay" style={{ zIndex: 5000 }}>
-            <div className="skyrim-modal-content level-up-modal-advanced" style={{ minWidth: '600px' }}>
-                <h2>{t('level_up.title')} <span style={{ fontSize: '1rem', color: '#ffd700' }}>({pendingLevelUps} Níveis)</span></h2>
-                <div className="tooltip-divider" style={{ width: '100%', marginBottom: '20px' }}></div>
+            <div className={`skyrim-modal-content level-up-modal-advanced ${switchingActorId ? 'is-switching-actor' : ''}`} aria-busy={Boolean(switchingActorId)}>
+                <div className="level-up-header">
+                    <div className="level-up-title-group">
+                        <h2>{t('level_up.title', { name: actor.name })}</h2>
+                        <span className="level-up-count">{t('level_up.levels_pending', { count: pendingLevelUps })}</span>
+                    </div>
+                    <div className="level-up-points-summary">
+                        <span>{t('level_up.points_remaining')}</span>
+                        <strong>{pointsRemaining}</strong>
+                    </div>
+                </div>
+                {levelUpActors.length > 1 && (
+                    <div className="level-up-actor-tabs" role="tablist" aria-label={t('level_up.actor_tabs')}>
+                        {levelUpActors.map(candidate => {
+                            const isActive = candidate.id === actor.id;
+                            return (
+                                <button
+                                    key={candidate.id}
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={isActive}
+                                    className={isActive ? 'active' : ''}
+                                    onClick={() => handleLevelUpActorSelect(candidate.id)}
+                                    disabled={Boolean(switchingActorId)}
+                                    data-level-up-action
+                                >
+                                    <span className="level-up-actor-name">{candidate.name}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+                {levelUpActors.length <= 1 && <div className="tooltip-divider level-up-divider"></div>}
 
-                <div className="level-up-layout" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                <div className="level-up-layout">
 
                     {/* ESQUERDA: Distribuição de Skills (Pooled) */}
                     <div className="skill-allocation-section">
@@ -3173,24 +3486,31 @@ const LevelUpModal = ({ trees, settings, rules, actor, currentLevel, pendingLeve
                                     key={cat}
                                     className={`level-up-category-btn ${activeCategory === cat ? 'active' : ''}`}
                                     onClick={() => setActiveCategory(cat)}
+                                    data-level-up-action
                                 >
                                     {cat === "All" ? t('common.all').toUpperCase() : resolveText(cat, false).toUpperCase()}
                                 </button>
                             ))}
                         </div>
 
-                        <div className="allocation-list-grid" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                        <div className="allocation-list-grid">
                             {filteredTrees.map(tree => {
                                 const allocated = allocations[tree.name] || 0;
                                 const cap = tree.cap || currentCapEffective.skillCap || 100;
                                 const isCapped = (tree.currentLevel + allocated) >= cap;
+                                const isLocked = isTreeLocked(tree);
+                                const hideName = isLocked && (uiSettings?.hideLockedTreeNames ?? true);
 
                                 const resolvedTreeName = resolveText(tree.displayName || tree.name, false);
+                                const displayTreeName = hideName ? "????" : resolvedTreeName.toUpperCase();
 
                                 return (
-                                    <div className="allocation-item" key={tree.name}>
+                                    <div className={`allocation-item ${isLocked ? 'allocation-item-locked' : ''}`} key={tree.name}>
                                         <div className="alloc-info">
-                                            <span className="alloc-name">{resolvedTreeName.toUpperCase()}</span>
+                                            <span className="alloc-name">
+                                                {displayTreeName}
+                                                {isLocked && <LockIcon className="inline-lock-icon" />}
+                                            </span>
                                             <div className="alloc-level-wrapper">
                                                 <span className={`alloc-level ${isCapped ? 'capped-text' : ''}`}>
                                                     {tree.currentLevel}
@@ -3200,11 +3520,12 @@ const LevelUpModal = ({ trees, settings, rules, actor, currentLevel, pendingLeve
                                             </div>
                                         </div>
                                         <div className="alloc-controls">
-                                            <button onClick={() => removePoint(tree.name)} disabled={allocated === 0}>-</button>
+                                            <button onClick={() => removePoint(tree.name)} disabled={isLocked || allocated === 0} data-level-up-action>-</button>
                                             <button
                                                 onClick={() => addPoint(tree)}
-                                                disabled={pointsRemaining === 0 || isCapped}
-                                                title={isCapped ? t('level_up.cap_reached') : ""}
+                                                disabled={isLocked || pointsRemaining === 0 || isCapped}
+                                                title={isLocked ? t('reqs.locked_tree_title') : (isCapped ? t('level_up.cap_reached') : "")}
+                                                data-level-up-action
                                             >
                                                 +
                                             </button>
@@ -3216,15 +3537,19 @@ const LevelUpModal = ({ trees, settings, rules, actor, currentLevel, pendingLeve
                     </div>
 
                     {/* DIREITA: Escolha de Atributos por Nível */}
-                    <div className="level-up-attributes-section" style={{ display: 'flex', flexDirection: 'column', gap: '15px', maxHeight: '400px', overflowY: 'auto', paddingRight: '10px' }}>
-                        <h3 style={{ margin: '0 0 5px 0' }}>{t('level_up.select_attributes', { defaultValue: 'Selecione os Atributos' })}</h3>
+                    <div className="level-up-attributes-section">
+                        <div className="level-up-section-heading">
+                            <h3>{t('level_up.select_attributes', { defaultValue: 'Selecione os Atributos' })}</h3>
+                            <span>{t('level_up.attributes_progress', { selected: selectedAttributeCount, total: levelsToProcess.length })}</span>
+                        </div>
 
-                        {levelsToProcess.map(({ level, eff }) => {
-                            const selectedAttr = selectedAttributes[level];
-                            return (
-                                <div key={level} className="level-attribute-row" style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '5px', border: '1px solid rgba(255,255,255,0.1)' }}>
-                                    <div style={{ marginBottom: '8px', fontWeight: 'bold', color: '#4dd0e1', fontSize: '1.1rem' }}>{t('common.lvl')} {level}</div>
-                                    <div style={{ display: 'flex', gap: '10px', justifyContent: 'space-between' }}>
+                        <div className="level-up-attributes-list">
+                            {visibleLevels.map(({ level, eff }) => {
+                                const selectedAttr = selectedAttributes[level];
+                                return (
+                                    <div key={level} className="level-attribute-row">
+                                        <div className="level-attribute-title">{t('common.lvl')} {level}</div>
+                                        <div className="attribute-button-row">
                                         {['Health', 'Magicka', 'Stamina'].map(attr => {
                                             const isSelected = selectedAttr === attr;
                                             const incValue = attr === 'Health' ? eff.healthIncrease : attr === 'Magicka' ? eff.magickaIncrease : eff.staminaIncrease;
@@ -3239,30 +3564,49 @@ const LevelUpModal = ({ trees, settings, rules, actor, currentLevel, pendingLeve
                                                     key={attr}
                                                     className={`attribute-btn ${attr.toLowerCase()} ${isSelected ? 'selected-attr' : ''}`}
                                                     onClick={() => setSelectedAttributes(prev => ({ ...prev, [level]: attr }))}
-                                                    style={{
-                                                        flex: 1, padding: '8px', fontSize: '0.85rem',
-                                                        opacity: isSelected ? 1 : 0.6,
-                                                        border: isSelected ? '1px solid white' : '1px solid transparent'
-                                                    }}
+                                                    data-level-up-action
                                                 >
                                                     <div>{t(`header.${attr.toLowerCase()}`)}</div>
-                                                    <div style={{ color: '#ffd700' }}>(+{incValue})</div>
-                                                    {givesCW && <div style={{ fontSize: '0.7rem', color: '#ccc', marginTop: '2px' }}>{t('common.cw', { defaultValue: 'CW' })} +{cwInc}</div>}
+                                                    <div className="attribute-increase">+{incValue}</div>
+                                                    {givesCW && <div className="attribute-carry-weight">{t('common.cw', { defaultValue: 'CW' })} +{cwInc}</div>}
                                                 </button>
                                             );
                                         })}
+                                        </div>
                                     </div>
-                                </div>
-                            );
-                        })}
+                                );
+                            })}
+                        </div>
+                        {attributePageCount > 1 && (
+                            <div className="level-up-pagination">
+                                <button
+                                    type="button"
+                                    onClick={() => setAttributePage(page => Math.max(0, page - 1))}
+                                    disabled={attributePage === 0}
+                                    data-level-up-action
+                                >
+                                    {t('level_up.previous_page')}
+                                </button>
+                                <span>{attributePage + 1} / {attributePageCount}</span>
+                                <button
+                                    type="button"
+                                    onClick={() => setAttributePage(page => Math.min(attributePageCount - 1, page + 1))}
+                                    disabled={attributePage === attributePageCount - 1}
+                                    data-level-up-action
+                                >
+                                    {t('level_up.next_page')}
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
 
-                <div className="modal-actions" style={{ marginTop: '25px' }}>
+                <div className="modal-actions level-up-actions">
                     <button
                         className={`modal-btn yes-btn ${(!canConfirm || isProcessing) ? 'disabled-btn' : ''}`}
                         onClick={handleConfirm}
-                        disabled={!canConfirm || isProcessing}
+                        disabled={!canConfirm || isProcessing || Boolean(switchingActorId)}
+                        data-level-up-action
                     >
                         {isProcessing ? t('common.processing') : t('level_up.confirm_btn')}
                     </button>
@@ -3752,6 +4096,11 @@ function App() {
     });
 
 
+    const pendingLevelUpActors = useMemo(
+        () => actors.filter(actor => (actor.pendingLevelUps || 0) > 0),
+        [actors]
+    );
+
     const shouldShowLevelUp = useMemo(() => {
         return (playerData?.pendingLevelUps || 0) > 0 && !isEditorMode && settings;
     }, [playerData?.pendingLevelUps, isEditorMode, settings]);
@@ -4128,12 +4477,18 @@ function App() {
         }
     }, [playerData?.id]);
 
+    useEffect(() => {
+        if (!settings || isEditorMode || (playerData?.pendingLevelUps || 0) > 0) return;
+        const nextActor = pendingLevelUpActors[0];
+        if (nextActor && nextActor.id !== playerData?.id) handleActorSelect(nextActor.id);
+    }, [handleActorSelect, isEditorMode, pendingLevelUpActors, playerData?.id, playerData?.pendingLevelUps, settings]);
+
     const handleAttributeSelect = useCallback((payload: any) => {
         console.log("[PrismaUI] Enviando payload de Level Up para o plugin C++:", payload);
 
         playSound('UISkillIncreaseSD');
         if (typeof (window as any).chooseAttribute === 'function') {
-            (window as any).chooseAttribute(JSON.stringify({ ...payload, actorId: playerData?.id }));
+            (window as any).chooseAttribute(JSON.stringify({ ...payload, actorId: payload.actorId || playerData?.id }));
         }
     }, [playerData?.id]);
 
@@ -4250,10 +4605,7 @@ function App() {
             }
             else if (key === 'w' || key === 'enter') {
                 if (hoveredSkillName) {
-                    const isLocked = skillTrees.find(t => t.name === hoveredSkillName)?.treeRequirements?.some(req => req.isMet === false);
-                    if (!isLocked) {
-                        setSelectedSkill(hoveredSkillName);
-                    }
+                    setSelectedSkill(hoveredSkillName);
                 }
             }
         };
@@ -4372,8 +4724,17 @@ function App() {
         return () => window.removeEventListener('requestDeleteTree', handleDeleteRequest);
     }, []);
 
+    const usesLargeLevelUpUI = Math.max(
+        uiSettings?.levelUpTitleSizePercent ?? 125,
+        uiSettings?.levelUpTextSizePercent ?? 115,
+        uiSettings?.levelUpButtonScalePercent ?? 120
+    ) >= 150;
+
     return (
-        <div className={`app-container ${isLoaded ? 'loaded' : ''} ${isExiting ? 'exiting' : ''} ${uiSettings?.performanceMode ? 'performance-mode' : ''}`}>
+        <div
+            className={`app-container ${isLoaded ? 'loaded' : ''} ${isExiting ? 'exiting' : ''} ${uiSettings?.performanceMode ? 'performance-mode' : ''} ${usesLargeLevelUpUI ? 'level-up-large-ui' : ''}`}
+            style={getUIStyle(uiSettings)}
+        >
             {playerData && (
                 <PlayerHeader
                     player={playerData}
@@ -4391,11 +4752,8 @@ function App() {
 
                     {isEditorMode && (
                         <>
-                            <button className="editor-btn" onClick={handleCreateNewTree} style={{ borderColor: '#4dd0e1', color: '#4dd0e1' }}>
+                            <button className="editor-btn accent-btn" onClick={handleCreateNewTree}>
                                 {t('editor_toolbar.new_tree')}
-                            </button>
-                            <button className="editor-btn" onClick={() => setIsEditingSettings(true)}>
-                                {t('editor_toolbar.edit_settings')}
                             </button>
                             <button className="editor-btn save-btn" onClick={handleSaveTrees}>
                                 {t('editor_toolbar.save_changes')}
@@ -4405,18 +4763,6 @@ function App() {
                     )}
                 </div>
             )}
-
-            <div style={{ position: 'absolute', bottom: '40px', right: '40px', zIndex: 1500 }}>
-                <button className="ui-settings-btn" onClick={() => setIsEditingUISettings(true)}>
-                    {t('ui_options.btn_text')}
-                </button>
-            </div>
-
-            <div style={{ position: 'absolute', bottom: '40px', right: '40px', zIndex: 1500 }}>
-                <button className="ui-settings-btn" onClick={() => setIsEditingUISettings(true)}>
-                    {t('ui_options.btn_text')}
-                </button>
-            </div>
 
             <div
                 className="skills-infinite-container embla"
@@ -4543,28 +4889,16 @@ function App() {
                 <LevelUpModal
                     key={`${playerData!.id}-${playerData!.level}-${playerData!.pendingLevelUps || 0}`}
                     actor={playerData!}
+                    actors={pendingLevelUpActors}
                     trees={skillTrees.filter(tree => !tree.isHidden)}
                     rules={rules}
                     settings={settings}
+                    uiSettings={uiSettings}
                     currentLevel={playerData!.level || 1}
+                    firstPendingLevel={playerData!.firstPendingLevel}
                     pendingLevelUps={playerData!.pendingLevelUps || 0}
                     onSelect={handleAttributeSelect}
-                />
-            )}
-
-            {isEditingSettings && settings && (
-                <SettingsModal
-                    settings={settings}
-                    rules={rules}
-                    selectedActor={playerData}
-                    formLists={formLists}
-                    onClose={() => setIsEditingSettings(false)}
-                    onSaveSettings={handleSaveSettings}
-                    onSaveRules={handleSaveRules}
-                    onResetAllPerks={handleResetAllRequest}
-                    customResources={customResources}
-                    onSaveResources={handleSaveResources}
-                    onDeleteResource={handleDeleteResource}
+                    onActorSelect={handleActorSelect}
                 />
             )}
 
@@ -4640,14 +4974,6 @@ function App() {
                         </div>
                     </div>
                 </div>
-            )}
-
-            {isEditingUISettings && uiSettings && (
-                <UISettingsModal
-                    settings={uiSettings}
-                    onClose={() => setIsEditingUISettings(false)}
-                    onSave={handleSaveUISettings}
-                />
             )}
 
             {confirmAction && (
