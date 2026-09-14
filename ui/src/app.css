@@ -743,7 +743,7 @@ body {
     height: 100vh;
     z-index: 300;
     color: white;
-    animation: expandTree 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation: detailFadeIn 160ms ease-out both;
 }
 
 .close-tree-btn {
@@ -930,16 +930,9 @@ body {
     }
 }
 
-@keyframes expandTree {
-    from {
-        opacity: 0;
-        transform: scale(0.8) translateY(10vh);
-    }
-
-    to {
-        opacity: 1;
-        transform: scale(1) translateY(0);
-    }
+@keyframes detailFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 .perk-node-container {
@@ -1176,26 +1169,17 @@ body {
     color: white;
     letter-spacing: 4px;
     cursor: pointer;
-    transition: all 0.3s;
+    /* CPU renderer: hover changes only flat colors, without intermediate frames. */
+    transition: none;
+    text-shadow: none;
+    box-shadow: none;
     position: relative;
     overflow: hidden;
 }
 
     .attribute-btn:hover {
         border-color: white;
-        transform: scale(1.02);
-    }
-
-    .attribute-btn.magicka:hover {
-        text-shadow: 0 0 10px #4dd0e1;
-    }
-
-    .attribute-btn.health:hover {
-        text-shadow: 0 0 10px #e57373;
-    }
-
-    .attribute-btn.stamina:hover {
-        text-shadow: 0 0 10px #81c784;
+        background: rgba(255,255,255,0.06);
     }
 
 @keyframes fadeInModal {
@@ -1355,7 +1339,9 @@ body {
     width: min(var(--nsm-level-up-modal-width, 82vw), calc(100vw - 48px));
     max-width: 1600px;
     min-width: 0;
+    height: min(var(--nsm-level-up-modal-height, 86vh), calc(100vh - 48px));
     max-height: min(var(--nsm-level-up-modal-height, 86vh), calc(100vh - 48px));
+    box-sizing: border-box;
     padding: var(--nsm-level-up-space-3, 26px);
     display: flex;
     flex-direction: column;
@@ -1473,7 +1459,7 @@ body {
     display: grid;
     grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
     gap: var(--nsm-level-up-space-3, 26px);
-    flex: 1 1 auto;
+    flex: 1 1 0;
     min-height: 0;
     overflow: hidden;
 }
@@ -1484,6 +1470,7 @@ body {
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+    overflow: hidden;
 }
 
 .level-up-layout h3 {
@@ -1557,17 +1544,28 @@ body {
     padding-right: var(--nsm-level-up-space-1, 10px);
     align-content: start;
     min-height: 0;
-    flex: 1 1 auto;
+    flex: 1 1 0;
+    padding-bottom: var(--nsm-level-up-space-1, 10px);
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.35) rgba(255,255,255,0.05);
 }
 
-    .allocation-list-grid::-webkit-scrollbar {
-        width: 6px;
-    }
+.allocation-list-grid::-webkit-scrollbar,
+.level-up-attributes-list::-webkit-scrollbar {
+    width: 6px;
+}
 
-    .allocation-list-grid::-webkit-scrollbar-thumb {
-        background: rgba(255,255,255,0.3);
-        border-radius: 4px;
-    }
+.allocation-list-grid::-webkit-scrollbar-thumb,
+.level-up-attributes-list::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.35);
+    border-radius: 4px;
+}
+
+.allocation-list-grid::-webkit-scrollbar-track,
+.level-up-attributes-list::-webkit-scrollbar-track {
+    background: rgba(255,255,255,0.05);
+}
 
 .allocation-item {
     display: flex;
@@ -1660,8 +1658,13 @@ body {
     flex-direction: column;
     gap: var(--nsm-level-up-space-2, 17px);
     min-height: 0;
+    flex: 1 1 0;
     overflow-y: auto;
     padding-right: var(--nsm-level-up-space-1, 10px);
+    padding-bottom: var(--nsm-level-up-space-1, 10px);
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.35) rgba(255,255,255,0.05);
 }
 
 .level-up-pagination {
@@ -1735,23 +1738,6 @@ body {
     overflow: hidden;
 }
 
-    .level-up-modal-advanced .attribute-btn:hover {
-        border-color: white;
-        transform: scale(1.02);
-    }
-
-    .level-up-modal-advanced .attribute-btn.magicka:hover {
-        text-shadow: 0 0 10px #4dd0e1;
-    }
-
-    .level-up-modal-advanced .attribute-btn.health:hover {
-        text-shadow: 0 0 10px #e57373;
-    }
-
-    .level-up-modal-advanced .attribute-btn.stamina:hover {
-        text-shadow: 0 0 10px #81c784;
-    }
-
     .level-up-modal-advanced .attribute-btn.selected-attr {
         border-color: var(--nsm-accent, white);
         background: rgba(255,255,255,0.15);
@@ -1777,7 +1763,7 @@ body {
 .level-up-modal-advanced [data-level-up-action]:focus-visible {
     outline: 2px solid var(--nsm-accent, #4dd0e1);
     outline-offset: 3px;
-    box-shadow: 0 0 0 4px rgba(77, 208, 225, 0.18);
+    box-shadow: none;
 }
 
 .level-up-actions {
@@ -1801,6 +1787,7 @@ body {
 @media (max-width: 1100px) {
     .level-up-modal-advanced {
         width: calc(100vw - 24px);
+        height: calc(100vh - 24px);
         max-height: calc(100vh - 24px);
         padding: var(--nsm-level-up-space-2, 17px);
     }
@@ -1808,22 +1795,25 @@ body {
     .level-up-layout {
         grid-template-columns: 1fr;
         overflow-y: auto;
+        align-content: start;
+    }
+
+    .skill-allocation-section,
+    .level-up-attributes-section {
+        overflow: visible;
     }
 
     .allocation-list-grid,
     .level-up-attributes-list {
+        flex: none;
         overflow: visible;
     }
 }
 
-.level-up-large-ui .level-up-layout {
-    grid-template-columns: 1fr;
-    overflow-y: auto;
-}
-
-.level-up-large-ui .allocation-list-grid,
-.level-up-large-ui .level-up-attributes-list {
-    overflow: visible;
+@media (min-width: 1101px) {
+    .level-up-large-ui .allocation-list-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 @media (max-width: 720px) {
@@ -3573,4 +3563,29 @@ body {
 
 .header-item .custom-select-chevron {
     right: 3px;
+}
+
+/* Diagnostic isolation: stop background animations when previews are disabled. */
+.app-container.nsm-no-background * { animation: none !important; transition: none !important; }
+
+/* Overview and categories share one transition; no nested delays or full-screen zoom. */
+.app-container:not(.exiting) .skills-infinite-container,
+.app-container:not(.exiting) .bottom-ui-panel {
+    transform: none;
+    transition: opacity 160ms ease-out;
+}
+
+.bottom-ui-panel .category-filter-container,
+.bottom-ui-panel .bottom-skills-grid {
+    opacity: 1;
+    transform: none;
+    transition: none;
+}
+
+.app-container[data-detail-open="true"] .skills-infinite-container,
+.app-container[data-detail-open="true"] .bottom-ui-panel {
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition: none;
 }

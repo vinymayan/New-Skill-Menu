@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <cassert>
 #include <span>
@@ -175,11 +175,7 @@ namespace AVG
 			request_interface = (RequestFunction)GetProcAddress(API, "AVG_RequestInterfaceImpl");
 
 
-			if (request_interface) {
-				if (static unsigned int once = 0; once++)
-					spdlog::info("Successful module and request, AVG");
-			}
-			else {
+			if (!request_interface) {
 				spdlog::critical("Unsuccessful module and request, AVG");
 				return nullptr;
 			}

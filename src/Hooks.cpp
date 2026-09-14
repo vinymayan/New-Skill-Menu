@@ -166,16 +166,7 @@ public:
         if (event->opening && event->menuName == TweenMenu::MENU_NAME) {
             Inject(TweenMenu::MENU_NAME);
         }
-        else if (event->opening && event->menuName == "PrismaUI_FocusMenu") {
-            auto ui = RE::UI::GetSingleton();
-            if (ui && !Prisma::IsHidden()) {
-                auto focusMenu = ui->GetMenu("PrismaUI_FocusMenu");
-                if (focusMenu) {
-                    focusMenu->menuFlags.set(RE::UI_MENU_FLAGS::kFreezeFrameBackground, RE::UI_MENU_FLAGS::kTopmostRenderedMenu);
-                }
-            }
 
-        }
         return BSEventNotifyControl::kContinue;
     }
 };

@@ -3538,6 +3538,15 @@ void Prisma::Show() {
                 logger::debug("Inspector visibility set to: {}", isInspectorVisible);
                 });
             // Registramos os listeners primeiro
+            PrismaUI->RegisterJSListener(currentView, "uiReady", [](const char*) {
+                if (!isVisible) return;
+                const auto ui = RE::UI::GetSingleton();
+                const auto focusMenu = ui ? ui->GetMenu("PrismaUI_FocusMenu") : nullptr;
+                if (focusMenu) {
+                    focusMenu->menuFlags.set(RE::UI_MENU_FLAGS::kFreezeFrameBackground,
+                                            RE::UI_MENU_FLAGS::kTopmostRenderedMenu);
+                }
+            });
             PrismaUI->RegisterJSListener(currentView, "hideWindow", [](const char*) {
                 logger::debug("Recebida requisicao para fechar o menu Prisma.");
 				Prisma::Hide();
@@ -3725,7 +3734,8 @@ void Prisma::Hide() {
         if (ui) {
             auto focusMenu = ui->GetMenu("PrismaUI_FocusMenu");
             if (focusMenu) {
-                focusMenu->menuFlags.reset(RE::UI_MENU_FLAGS::kFreezeFrameBackground);
+                focusMenu->menuFlags.reset(RE::UI_MENU_FLAGS::kFreezeFrameBackground,
+                                           RE::UI_MENU_FLAGS::kTopmostRenderedMenu);
             }
         }
         if (ShouldTriggerMouseMode()) {

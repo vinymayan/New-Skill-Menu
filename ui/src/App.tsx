@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, memo, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, memo, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import useEmblaCarousel from 'embla-carousel-react';
 import { SketchPicker } from 'react-color';
@@ -2957,9 +2957,9 @@ const SkillTreeDetail = ({
 
             <div className="tree-detail-slider embla" ref={emblaRef}>
                 <div className="embla__container">
-                    {trees.map((tree) => (
+                    {trees.map((tree, index) => (
                         <div className="embla__slide" key={`detail-${tree.name}`} style={{ flex: '0 0 50%', minWidth: 0, height: '100%' }}>
-                            <SingleSkillTreeSlide
+                            {Math.min(Math.abs(index - currentIndex), trees.length - Math.abs(index - currentIndex)) <= 2 && <SingleSkillTreeSlide
                                 treeData={tree}
                                 isEditorMode={!!isEditorMode}
                                 keyboardSelectedNodeId={tree.name === trees[currentIndex]?.name ? keyboardNodeId : null}
@@ -2976,7 +2976,7 @@ const SkillTreeDetail = ({
                                 onLegendary={onLegendary}
                                 playerData={playerData}             
                                 customResources={customResources}
-                            />
+                            />}
                         </div>
                     ))}
                 </div>
@@ -3563,6 +3563,7 @@ const LevelUpModal = ({ trees, settings, rules, uiSettings, actor, actors, curre
                                                 <button
                                                     key={attr}
                                                     className={`attribute-btn ${attr.toLowerCase()} ${isSelected ? 'selected-attr' : ''}`}
+                                                    aria-pressed={isSelected}
                                                     onClick={() => setSelectedAttributes(prev => ({ ...prev, [level]: attr }))}
                                                     data-level-up-action
                                                 >
@@ -4053,6 +4054,16 @@ function App() {
     const [isEditorMode, setIsEditorMode] = useState(false);
     const [isExiting, setIsExiting] = useState(false);
     const [isLoaded, setIsLoaded] = useState(false);
+
+    useEffect(() => {
+        if (!isLoaded || isExiting) return;
+        // Wait for the loaded React tree to commit and pass a paint opportunity.
+        let frame = requestAnimationFrame(() => {
+            frame = requestAnimationFrame(() => (window as any).uiReady?.(''));
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [isLoaded, isExiting]);
+
     const [formLists, setFormLists] = useState<Record<string, AvailablePerk[]>>({});
     const [confirmingPerk, setConfirmingPerk] = useState<PerkNode | null>(null);
     const [settings, setSettings] = useState<SettingsData | null>(null);
@@ -4346,9 +4357,6 @@ function App() {
     }, [emblaApi]);
 
 
-    // Trava para evitar múltiplas chamadas do React Strict Mode
-    const hasRequestedSkills = useRef(false);
-
     useEffect(() => {
         const handleUpdateSkills = (event: any) => {
             const data = event.detail;
@@ -4360,7 +4368,6 @@ function App() {
                 setIsLoaded(false);
                 return;
             }
-            
 
             if (data.fallbackTranslation && Object.keys(data.fallbackTranslation).length > 0) {
                 addTranslation('en', data.fallbackTranslation);
@@ -4398,9 +4405,11 @@ function App() {
                 });
 
                 // LIBERA A TELA IMEDIATAMENTE! Não trava mais a UI se um SVG demorar pra carregar
-                requestAnimationFrame(() => requestAnimationFrame(() => {
-                    setIsLoaded(true);
-                }));
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        setIsLoaded(true);
+                    });
+                });
 
                 // Faz o pre-fetch background em paralelo (Cache na Entrada)
                 Array.from(pathsToLoad).forEach(path => {
@@ -4432,14 +4441,6 @@ function App() {
         };
 
         window.addEventListener('updateSkills', handleUpdateSkills);
-
-        // Faz a requisição inicial estritamente UMA vez
-        if (!hasRequestedSkills.current) {
-            hasRequestedSkills.current = true;
-            if (typeof (window as any).requestSkills === 'function') {
-                (window as any).requestSkills("");
-            }
-        }
 
         return () => window.removeEventListener('updateSkills', handleUpdateSkills);
     }, []);
@@ -4730,9 +4731,11 @@ function App() {
         uiSettings?.levelUpButtonScalePercent ?? 120
     ) >= 150;
 
+
     return (
         <div
             className={`app-container ${isLoaded ? 'loaded' : ''} ${isExiting ? 'exiting' : ''} ${uiSettings?.performanceMode ? 'performance-mode' : ''} ${usesLargeLevelUpUI ? 'level-up-large-ui' : ''}`}
+            data-detail-open={Boolean(selectedSkill)}
             style={getUIStyle(uiSettings)}
         >
             {playerData && (
@@ -4767,7 +4770,6 @@ function App() {
             <div
                 className="skills-infinite-container embla"
                 ref={emblaRef}
-                style={selectedSkill ? { visibility: 'hidden', opacity: 0, pointerEvents: 'none' } : undefined}
                 onWheel={handleCarouselWheel}
                 onMouseDown={handleMainCarouselMouseDown}
                 onMouseMove={handleMainCarouselMouseMove}
@@ -4798,33 +4800,7 @@ function App() {
             {skillTrees.length > 0 && (
                 <div
                     className="bottom-ui-panel"
-                    style={selectedSkill ? { visibility: 'hidden', opacity: 0, pointerEvents: 'none' } : undefined}
-                >
-                    <div className="category-filter-container">
-                        {categories.map(cat => (
-                            <button key={cat} className={`category-btn ${activeCategory === cat ? 'active' : ''}`} onClick={() => setActiveCategory(cat)}>
-                                {cat === "All" ? t('common.all').toUpperCase() : cat.toUpperCase()}
-                            </button>
-                        ))}
-                    </div>
-
-                    <BottomSkillGrid
-                        trees={filteredTrees}
-                        globalSettings={settings}
-                        uiSettings={uiSettings}
-                        onHoverSkill={handleSnapToSkill}
-                        onClickSkill={handleBottomSkillSelect}
-                        onContextMenu={handleTreeContextMenu}
-                        isEditorMode={isEditorMode}
-                    />
-                </div>
-            )}
-
-            {!selectedSkill && skillTrees.length > 0 && (
-                <div
-                    className="bottom-ui-panel"
-                    style={selectedSkill ? { visibility: 'hidden', opacity: 0, pointerEvents: 'none' } : undefined}
-                >
+                    >
                     <div className="category-filter-container">
                         {categories.map(cat => (
                             <button key={cat} className={`category-btn ${activeCategory === cat ? 'active' : ''}`} onClick={() => setActiveCategory(cat)}>
