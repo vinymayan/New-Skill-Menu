@@ -139,6 +139,8 @@ bool RosterService::IsActiveCompanion(
 {
     if (!actor) return false;
 
+    if (!settings.value("followerDetection", nlohmann::json::object()).value("enabled", true)) return false;
+
     const auto currentFactions = ResolveFactions(
         settings,
         "currentFollowerFactions",

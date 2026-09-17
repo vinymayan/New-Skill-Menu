@@ -1,4 +1,5 @@
-﻿#include "Plugin.h"
+#include "FollowerDistribution.h"
+#include "Plugin.h"
 #include "Configuration.h"
 #include "Hooks.h"
 #include "InputEventHandler.h"
@@ -375,8 +376,8 @@ void OnSerializationLoad(SKSE::SerializationInterface* a_intfc) {
 }
 void OnSerializationRevert(SKSE::SerializationInterface* a_intfc) {
     Manager::GetSingleton()->Revert(a_intfc);
-    Prisma::Hide();
-    Prisma::SendUpdateToUI();
+    FollowerDistribution::BeginLoad();
+    Prisma::ResetForLoad();
 }
 
 extern void GenerateAllVanillaTrees();
@@ -451,6 +452,21 @@ namespace {
 }
 
 void OnMessage(SKSE::MessagingInterface::Message* message) {
+    if (message->type == SKSE::MessagingInterface::kPreLoadGame) {
+        FollowerDistribution::BeginLoad();
+        Prisma::ResetForLoad();
+    }
+    if (message->type == SKSE::MessagingInterface::kPostLoadGame ||
+        message->type == SKSE::MessagingInterface::kNewGame) {
+        if (message->type == SKSE::MessagingInterface::kNewGame) {
+            FollowerDistribution::BeginLoad();
+            Prisma::ResetForLoad();
+        }
+        const auto epoch = FollowerDistribution::Epoch();
+        SKSE::GetTaskInterface()->AddTask([epoch] {
+            if (epoch == FollowerDistribution::Epoch()) FollowerDistribution::Resume();
+        });
+    }
     if (message->type == SKSE::MessagingInterface::kPostLoad) {
         ModMenu::Register();
         hasDFG = GetModuleHandleA("DynamicFormsGenerator.dll") != nullptr;
@@ -466,6 +482,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         Manager::GetSingleton()->LoadCustomSkills();
         Prisma::PreloadLocalization();
         PlayerLevel::Register();
+        FollowerDistribution::RegisterEvents();
         Prisma::Install();
         if (GetModuleHandleA("MouseMode.dll")) {
             Prisma::MouseMode = true;

@@ -2189,7 +2189,7 @@ body {
     flex-direction: column;
     align-items: center;
     background: rgba(0, 0, 0, 0.85);
-    border: 1px solid var(--nsm-danger, #ff5252);
+    border: 1px solid var(--nsm-locked-text, #aaa);
     padding: 20px;
     border-radius: 8px;
     width: min(80%, 520px);
@@ -2204,7 +2204,7 @@ body {
     .locked-tree-overlay .lock-icon {
         width: 40px;
         height: 40px;
-        color: #ff5252;
+        color: var(--nsm-locked-text, #aaa);
         margin-bottom: 10px;
     }
 
@@ -2212,7 +2212,7 @@ body {
     width: 1em;
     height: 1em;
     flex: 0 0 auto;
-    color: var(--nsm-danger, #ff5252);
+    color: var(--nsm-locked-text, #aaa);
 }
 
 .grid-skill-name {
@@ -2222,7 +2222,7 @@ body {
 }
 
     .locked-tree-overlay h3 {
-        color: #ff5252;
+        color: var(--nsm-locked-text, #aaa);
         font-family: 'Sovngarde', sans-serif;
         letter-spacing: 2px;
         margin: 0 0 15px 0;
@@ -3308,8 +3308,6 @@ body {
     border-bottom-color: var(--nsm-accent);
 }
 
-.locked-tree-overlay .lock-icon,
-.locked-tree-overlay h3,
 .req-unmet {
     color: var(--nsm-danger);
 }
@@ -3445,7 +3443,7 @@ body {
 /* Locked trees keep one visual language in normal and performance modes. */
 .app-container .column-locked .column-bg-image {
     opacity: 0.28 !important;
-    filter: none !important;
+    filter: grayscale(1) !important;
 }
 
 .app-container .column-locked .column-content {
@@ -3453,18 +3451,18 @@ body {
 }
 
 .app-container .locked-tree-overlay {
-    border-color: var(--nsm-danger, #ff5252) !important;
+    border-color: var(--nsm-locked-text, #aaa) !important;
 }
 
 .app-container .locked-tree-overlay .lock-icon,
 .app-container .locked-tree-overlay h3,
 .app-container .locked-tree-overlay .req-unmet,
 .app-container .inline-lock-icon {
-    color: var(--nsm-danger, #ff5252) !important;
+    color: var(--nsm-locked-text, #aaa) !important;
 }
 
 .app-container .locked-tree-overlay .req-met {
-    color: var(--nsm-success, #4caf50) !important;
+    color: var(--nsm-secondary-text, #ccc) !important;
 }
 
 /* Shared dropdown: flexible sizing, compact menu and no search decoration. */

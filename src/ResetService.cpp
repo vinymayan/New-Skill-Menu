@@ -1,3 +1,4 @@
+#include "FollowerDistribution.h"
 #include "ResetService.h"
 
 #include "Manager.h"
@@ -115,26 +116,48 @@ ResetService::json ResetService::Execute(
     const json& resources,
     int maxPerkPoints,
     int maxResets,
-    bool countReset)
+    bool countReset, std::function<void(json)> completion, bool distributed,
+    const std::map<std::string, float>* replacementValues)
 {
-    (void)resources;
+    if (FollowerDistribution::Busy(actor)) return {{"success", false}, {"reason", "actor_busy_or_loading"}};
     auto result = Preview(actor, allowedPerks, maxResets);
     if (!result.value("allowed", false)) return result;
 
     auto manager = Manager::GetSingleton();
     auto purchases = manager->GetPurchasedPerks(actor);
+    if (actor && !actor->IsPlayerRef() && replacementValues && !distributed) {
+        auto desired = FollowerDistribution::Purchased(actor);
+        for (const auto& [id, purchase] : purchases) if (Includes(allowedPerks, id)) desired.erase(id);
+        const auto actorID = actor->GetFormID();
+        const bool queued = FollowerDistribution::Apply(actor, std::move(desired),
+            *replacementValues,
+            [actorID, allowedPerks, resources, maxPerkPoints, maxResets, countReset, completion](bool ok) {
+                auto* target = RE::TESForm::LookupByID<RE::Actor>(actorID);
+                json done = ok ? Execute(target, allowedPerks, resources, maxPerkPoints, maxResets, countReset, {}, true) :
+                    json{{"success", false}, {"reason", "distribution_failed"}};
+                if (completion) completion(done);
+            });
+        result["success"] = false;
+        result["pending"] = queued;
+        result["reason"] = queued ? "pending" : "distribution_unavailable";
+        return result;
+    }
     int refundedPoints = 0;
     int removed = 0;
 
     for (const auto& [perkId, ignored] : purchases) {
         (void)ignored;
         if (!Includes(allowedPerks, perkId)) continue;
-        auto purchase = manager->RemovePurchasedPerkRecord(actor, perkId);
-        if (!purchase) continue;
-
         if (auto perk = RE::TESForm::LookupByID<RE::BGSPerk>(perkId)) {
             if (actor->HasPerk(perk)) actor->RemovePerk(perk);
+            if (actor->HasPerk(perk)) {
+                logger::warn("[Economy] Reset removal failed actor={:08X} perk={:08X}; purchase retained",
+                    actor->GetFormID(), perkId);
+                continue;
+            }
         }
+        auto purchase = manager->RemovePurchasedPerkRecord(actor, perkId);
+        if (!purchase) continue;
         refundedPoints += purchase->perkPointCost;
         ResourceService::Refund(actor, purchase->resources);
         removed++;

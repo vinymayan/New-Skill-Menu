@@ -1,8 +1,10 @@
+#include "FollowerDistribution.h"
 #include "PurchaseService.h"
 
 #include "Manager.h"
 #include "ResourceService.h"
 #include "SnapshotService.h"
+
 
 PurchaseService::Result PurchaseService::Purchase(
     RE::Actor* actor,
@@ -14,10 +16,11 @@ PurchaseService::Result PurchaseService::Purchase(
     if (!actor || !perk) return { false, "invalid_actor_or_perk" };
     if (perkPointCost < 0) return { false, "invalid_perk_point_cost" };
 
-    auto ownership = SnapshotService::GetPerkOwnership(actor, perk);
+    if (FollowerDistribution::Busy(actor)) return { false, "actor_busy_or_loading" };
+    const auto ownership = SnapshotService::GetPerkOwnership(actor, perk);
     if (ownership.owned) return { false, "already_owned" };
 
-    auto manager = Manager::GetSingleton();
+    auto* manager = Manager::GetSingleton();
     const int previousPerkPoints = manager->GetActorPerkPoints(actor);
     if (previousPerkPoints < perkPointCost) {
         return { false, "insufficient_perk_points" };
@@ -30,11 +33,11 @@ PurchaseService::Result PurchaseService::Purchase(
     std::vector<PaidResource> paidResources;
     std::string resourceError;
     if (!ResourceService::Debit(
-        actor,
-        customCosts,
-        resources,
-        paidResources,
-        resourceError)) {
+            actor,
+            customCosts,
+            resources,
+            paidResources,
+            resourceError)) {
         manager->ModActorPerkPoints(actor, perkPointCost);
         return { false, resourceError };
     }

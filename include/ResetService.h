@@ -2,6 +2,8 @@
 
 #include <nlohmann/json.hpp>
 #include <unordered_set>
+#include <functional>
+#include <map>
 
 namespace ResetService
 {
@@ -18,5 +20,7 @@ namespace ResetService
         const json& resources,
         int maxPerkPoints,
         int maxResets,
-        bool countReset);
+        bool countReset, std::function<void(json)> completion = {},
+        bool distributed = false,
+        const std::map<std::string, float>* replacementValues = nullptr);
 }

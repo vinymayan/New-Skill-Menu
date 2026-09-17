@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "PrismaUI_API.h"
 #include <miniz.h>
 
@@ -15,6 +15,7 @@ public:
     static void Show();
     static void TriggerExitAnimation();
     static void Hide();
+    static void ResetForLoad();
     static bool IsHidden();
     static void SetLevelUpMenuOpen(bool isOpen);
     static bool IsLevelUpMenuOpen();

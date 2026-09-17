@@ -1,3 +1,4 @@
+#include "FollowerDistribution.h"
 #include "Manager.h"
 #include "ActorIdentityService.h"
 #include "Prisma.h"
@@ -580,15 +581,20 @@ bool Manager::HasCustomPerk(RE::Actor* actor, const std::string& perkId) {
 
 bool Manager::AddCustomPerk(RE::Actor* actor, const std::string& perkId) {
     auto perk = ResolvePerkString(perkId);
-    if (!actor || !perk || actor->HasPerk(perk)) return false;
+    if (!actor || !perk || FollowerDistribution::Busy(actor) || actor->HasPerk(perk)) return false;
     actor->AddPerk(perk);
+    if (!actor->HasPerk(perk)) return false;
+    if (!actor->IsPlayerRef()) RecordPurchasedPerk(actor, perk->GetFormID(), 0);
     return true;
 }
 
 bool Manager::RemoveCustomPerk(RE::Actor* actor, const std::string& perkId) {
     auto perk = ResolvePerkString(perkId);
-    if (!actor || !perk || !actor->HasPerk(perk)) return false;
-    actor->RemovePerk(perk);
+    if (!actor || !perk || FollowerDistribution::Busy(actor)) return false;
+    if (!actor->IsPlayerRef() && !WasPerkPurchasedForActor(actor, perk->GetFormID())) return false;
+    if (actor->HasPerk(perk)) actor->RemovePerk(perk);
+    if (actor->HasPerk(perk)) return false;
+    RemovePurchasedPerkRecord(actor, perk->GetFormID());
     return true;
 }
 
@@ -756,6 +762,11 @@ std::map<RE::FormID, PerkPurchaseRecord> Manager::GetPurchasedPerks(RE::Actor* a
 }
 
 void Manager::RehydratePurchasedPerks(RE::Actor* actor) {
+    if (FollowerDistribution::Loading()) return;
+    if (actor && !actor->IsPlayerRef()) {
+        FollowerDistribution::Restore(actor);
+        return;
+    }
     if (!actor) return;
     auto purchases = GetPurchasedPerks(actor);
     for (const auto& [perkId, record] : purchases) {
@@ -1012,6 +1023,7 @@ float Manager::GetRequiredXP(const std::string& skillId, int level) {
 
 // --- LOGICA DE SAVE / LOAD DO SKSE ---
 void Manager::Save(SKSE::SerializationInterface* a_intfc) {
+    FollowerDistribution::Save(a_intfc);
     if (!a_intfc->OpenRecord('SKIL', 3)) return;
 
     uint32_t actorCount = 0;
@@ -1096,6 +1108,10 @@ void Manager::Load(SKSE::SerializationInterface* a_intfc) {
     actorProgressStates.clear();
 
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
+        if (type == 'NDST') {
+            if (version == 1) FollowerDistribution::Load(a_intfc, length);
+            continue;
+        }
         if (type == 'APRG') {
             std::uint32_t actorCount = 0;
             if (!a_intfc->ReadRecordData(&actorCount, sizeof(actorCount))) continue;

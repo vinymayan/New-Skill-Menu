@@ -68,6 +68,7 @@ public:
     void RefreshLists(std::string_view a_signatures);
     void LoadCustomSkills(); 
     std::vector<std::string> GetAvailableSkills() const;
+    std::string GetCustomSkillActorValueName(const std::string& skillId) const;
 
     static std::string ToUTF8(std::string_view a_str);
     const std::vector<InternalFormInfo>& GetList(const std::string& typeName);
@@ -144,7 +145,7 @@ private:
     std::map<std::string, std::vector<InternalFormInfo>> _dataStore;
     std::vector<std::function<void()>> _readyCallbacks;
 
-    std::string GetCustomSkillActorValueName(const std::string& skillId) const;
+
     RE::ActorValue ResolveCustomSkillActorValue(const std::string& skillId) const;
     RE::Actor* ResolveActorFromFormID(RE::FormID actorFormID) const;
     void EnsureActorValueGeneratorConfig();

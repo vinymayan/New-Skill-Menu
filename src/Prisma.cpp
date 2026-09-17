@@ -1,4 +1,5 @@
-﻿#include "Prisma.h"
+#include "FollowerDistribution.h"
+#include "Prisma.h"
 #include "Manager.h"
 #include "Configuration.h"
 #include "ActorIdentityService.h"
@@ -1738,6 +1739,7 @@ json GetSettings() {
             {"resourceRewards", json::array()}
         }},
         {"followerDetection", {
+            {"enabled", true},
             {"currentFollowerFactions", json::array()},
             {"potentialFollowerFactions", json::array()},
             {"allowHumanoidTeammates", true},
@@ -2074,6 +2076,7 @@ static void SaveUISettingsFromUI(const char* jsonArgs) {
 }
 
 std::string GetPlayerSkillsJSON() {
+    if (FollowerDistribution::Loading()) return "{\"player\":null,\"trees\":[]}";
     try {
         auto player = RE::PlayerCharacter::GetSingleton();
         auto actor = GetSelectedActor();
@@ -2264,7 +2267,7 @@ std::string GetPlayerSkillsJSON() {
                     const auto permanentLevel = static_cast<int>(owner->GetPermanentActorValue(av));
                     const auto effectiveLevel = static_cast<int>(owner->GetActorValue(av));
                     currentLevel = useBaseSkill ? permanentLevel : effectiveLevel;
-                    requirementLevel = useBaseSkill ? baseLevel : effectiveLevel;
+                    requirementLevel = useBaseSkill ? (actor->IsPlayerRef() ? baseLevel : permanentLevel) : effectiveLevel;
                     if (playerSkills && playerSkills->data) {
                         uint32_t avInt = static_cast<uint32_t>(av);
                         if (avInt >= 6 && avInt <= 23) {
@@ -2283,7 +2286,7 @@ std::string GetPlayerSkillsJSON() {
                 int baseLevel = mgr->GetCustomSkillLevel(actor, skillName);
                 int totalLevel = mgr->GetCustomSkillTotalLevel(actor, skillName);
                 currentLevel = totalLevel;
-                requirementLevel = useBaseSkill ? baseLevel : totalLevel;
+                requirementLevel = useBaseSkill && actor->IsPlayerRef() ? baseLevel : totalLevel;
 
                 float currentXP = mgr->GetCustomSkillXP(actor, skillName);
                 float reqXP = mgr->GetRequiredXP(skillName, baseLevel);
@@ -2886,6 +2889,7 @@ void Prisma::Install() {
 }
 
 void Prisma::SendUpdateToUI() {
+    if (FollowerDistribution::Loading()) return;
     if (!PrismaUI || !Prisma::createdView) return;
 	logger::debug("Enviando atualização de dados para a UI...");
     std::string jsonStr = GetPlayerSkillsJSON();
@@ -2971,6 +2975,8 @@ static void RedeemCodeFromUI(const char* args) {
 
 
 static RE::Actor* ResolveSelectableActorFromPayload(const json& payload) {
+    if (FollowerDistribution::Loading() ||
+        payload.value("session", std::uint64_t{0}) != FollowerDistribution::Epoch()) return nullptr;
     std::string actorIdStr = payload.value("actorId", "");
     if (actorIdStr.empty()) return GetSelectedActor();
 
@@ -3089,22 +3095,31 @@ static void UnlockPerkFromUI(const char* args)
     }
 }
 
-static void ChooseAttributeFromUI(const char* args) {
+static void ChooseAttributeFromUI(const char* args, bool distributed = false) {
     if (!args) return;
     try {
         json payload = json::parse(args);
         json levelUpsArray = payload.value("levelUps", json::array());
         json skillsMap = payload.value("skills", json::object());
 
-        auto actor = ResolveSelectableActorFromPayload(payload);
+        auto actor = distributed ? RE::TESForm::LookupByID<RE::Actor>(
+            static_cast<RE::FormID>(std::stoul(payload.at("actorId").get<std::string>(), nullptr, 16))) :
+            ResolveSelectableActorFromPayload(payload);
         if (!actor) return;
-        if (actor->GetFormID() != g_selectedActorID) {
+        if (!distributed && actor->GetFormID() != g_selectedActorID) {
             logger::warn(
                 "[LevelUp] Rejected allocation for non-selected actor {:08X}.",
                 actor->GetFormID());
             return;
         }
 
+        auto mgr = Manager::GetSingleton();
+        const int requestedLevelUps = static_cast<int>(levelUpsArray.size());
+        const int pendingBefore = mgr->GetPendingLevelUps(actor);
+        if (requestedLevelUps <= 0 || requestedLevelUps > pendingBefore) return;
+
+        const int firstRewardLevel = mgr->GetFirstPendingLevel(actor);
+        if (!distributed) {
         const auto actorSnapshot = json::parse(GetPlayerSkillsJSON());
         std::unordered_map<std::string, bool> allocatableTrees;
         for (const auto& tree : actorSnapshot.value("trees", json::array())) {
@@ -3121,12 +3136,7 @@ static void ChooseAttributeFromUI(const char* args) {
             allocatableTrees[treeName] = isUnlocked;
         }
 
-        auto mgr = Manager::GetSingleton();
-        const int requestedLevelUps = static_cast<int>(levelUpsArray.size());
-        const int pendingBefore = mgr->GetPendingLevelUps(actor);
-        if (requestedLevelUps <= 0 || requestedLevelUps > pendingBefore) return;
 
-        const int firstRewardLevel = mgr->GetFirstPendingLevel(actor);
         int allowedSkillPoints = 0;
         int allowedSpend = 0;
         for (int i = 0; i < requestedLevelUps; ++i) {
@@ -3151,6 +3161,41 @@ static void ChooseAttributeFromUI(const char* args) {
             requestedSkillPoints += amount;
         }
         if (requestedSkillPoints > std::min(allowedSkillPoints, allowedSpend)) return;
+        }
+
+        for (const auto& level : levelUpsArray) {
+            const auto attribute = level.value("attribute", "");
+            if (attribute != "Health" && attribute != "Magicka" && attribute != "Stamina") return;
+        }
+        if (FollowerDistribution::Busy(actor)) return;
+        if (!actor->IsPlayerRef() && !distributed) {
+            auto values = FollowerDistribution::Contributions(actor);
+            int index = 0;
+            for (const auto& level : levelUpsArray) {
+                const auto settings = GetEffectiveSettings(firstRewardLevel + index++, actor);
+                const auto attribute = level.at("attribute").get<std::string>();
+                const auto setting = attribute == "Health" ? "healthIncrease" :
+                    attribute == "Magicka" ? "magickaIncrease" : "staminaIncrease";
+                values[attribute] += settings.value(setting, 10.0f);
+                const auto method = settings.value("carryWeightMethod", "none");
+                const auto linked = settings.value("carryWeightLinkedAttributes", json::array());
+                if (method == "auto" || (method == "linked" && std::find(linked.begin(), linked.end(), attribute) != linked.end()))
+                    values["CarryWeight"] += std::max(0.0f, settings.value("carryWeightIncrease", 0.0f));
+            }
+            for (const auto& [skill, amount] : skillsMap.items()) {
+                if (amount.get<int>() <= 0) continue;
+                auto av = GetActorValueFromName(skill);
+                const auto name = av == RE::ActorValue::kNone ? mgr->GetCustomSkillActorValueName(skill) :
+                    std::string(RE::ActorValueList::GetActorValueName(av));
+                values[name] += amount.get<float>();
+            }
+            payload["actorId"] = ActorRuntimeKey(actor);
+            const std::string copied = payload.dump();
+            if (!FollowerDistribution::Apply(actor, FollowerDistribution::Purchased(actor), std::move(values),
+                [copied](bool ok) { if (ok) ChooseAttributeFromUI(copied.c_str(), true); }))
+                logger::warn("[LevelUp] Distribution unavailable");
+            return;
+        }
 
         int totalExtraPerks = 0;
         int maxPerkPoints = GetEffectiveSettings(
@@ -3183,9 +3228,9 @@ static void ChooseAttributeFromUI(const char* args) {
             bool refillAttributes = effSettings.value("refillAttributesOnLevelUp", false);
             maxPerkPoints = effSettings.value("maxPerkPoints", maxPerkPoints);
 
-            if (attribute == "Health") actor->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kHealth, healthInc);
-            else if (attribute == "Magicka") actor->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kMagicka, magickaInc);
-            else if (attribute == "Stamina") actor->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kStamina, staminaInc);
+            if (!distributed && attribute == "Health") actor->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kHealth, healthInc);
+            else if (!distributed && attribute == "Magicka") actor->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kMagicka, magickaInc);
+            else if (!distributed && attribute == "Stamina") actor->AsActorValueOwner()->ModBaseActorValue(RE::ActorValue::kStamina, staminaInc);
 
             float cwInc = effSettings.value("carryWeightIncrease", 0.0f);
             std::string cwMethod = effSettings.value("carryWeightMethod", "none");
@@ -3204,7 +3249,7 @@ static void ChooseAttributeFromUI(const char* args) {
                 }
             }
 
-            if (giveCW && cwInc > 0.0f) {
+            if (!distributed && giveCW && cwInc > 0.0f) {
                 actor->AsActorValueOwner()->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kPermanent, RE::ActorValue::kCarryWeight, cwInc);
                 logger::info("Carry Weight incrementado em {} para o Nivel {}", cwInc, lvl);
             }
@@ -3237,7 +3282,7 @@ static void ChooseAttributeFromUI(const char* args) {
         }
 
         // 2. Aplica as Skills Escolhidas (Agrupadas)
-        for (auto& [skillName, amountVal] : skillsMap.items()) {
+        if (!distributed) for (auto& [skillName, amountVal] : skillsMap.items()) {
             int amount = amountVal.get<int>();
             if (amount > 0) {
                 RE::ActorValue av = GetActorValueFromName(skillName);
@@ -3403,6 +3448,23 @@ static void LegendarySkillFromUI(const char* args) {
         }
 
         const auto effective = GetEffectiveSettings(actor->GetLevel(), actor);
+        if (!actor->IsPlayerRef()) {
+            auto values = FollowerDistribution::Contributions(actor);
+            const auto av = GetActorValueFromName(treeName);
+            const auto name = av == RE::ActorValue::kNone ? Manager::GetSingleton()->GetCustomSkillActorValueName(treeName) :
+                std::string(RE::ActorValueList::GetActorValueName(av));
+            values.erase(name);
+            ResetService::Execute(actor, ResetService::PerksInTree(targetTree), GetCustomResources(),
+                effective.value("maxPerkPoints", 255), effective.value("maxResetsPerActor", -1), true,
+                [id = actor->GetFormID(), treeName](json result) {
+                    if (result.value("success", false)) {
+                        auto* target = RE::TESForm::LookupByID<RE::Actor>(id);
+                        Manager::GetSingleton()->SetCustomSkillXP(target, treeName, 0.0f);
+                    }
+                    Prisma::SendUpdateToUI();
+                }, false, &values);
+            return;
+        }
         const auto resetResult = ResetService::Execute(
             actor,
             ResetService::PerksInTree(targetTree),
@@ -3470,6 +3532,7 @@ static void ResetAllPerksFromUI(const char* args) {
             effective.value("maxPerkPoints", 255),
             effective.value("maxResetsPerActor", -1),
             true);
+        if (resetResult.value("pending", false)) return;
         if (!resetResult.value("success", false)) {
             logger::warn(
                 "[ResetAll] Reset rejeitado reason={}",
@@ -3492,6 +3555,7 @@ static void ResetAllPerksFromUI(const char* args) {
 static bool isInspectorVisible = false;
 static bool hasInspectorInitialized = false;
 void Prisma::Show() {
+    if (FollowerDistribution::Loading()) return;
     if (!PrismaUI) {
         logger::error("Impossivel executar Show(): PrismaUI e nulo!");
         return;
@@ -3511,6 +3575,9 @@ void Prisma::Show() {
         logger::debug("Caminho da UI: {}", path);
 
         view = PrismaUI->CreateView(path, [](PrismaView currentView) -> void {
+            if (FollowerDistribution::Loading() || !createdView || currentView != view) return;
+            const auto sessionScript = "window.nsmSession = " + std::to_string(FollowerDistribution::Epoch()) + ";";
+            PrismaUI->Invoke(currentView, sessionScript.c_str());
             logger::debug("DOM Pronto. Configurando interface...");
             PrismaUI->RegisterJSListener(currentView, "toggleInspector", [](const char*) {
                 // 1. Se ainda não foi criado, cria o Inspector View
@@ -3719,6 +3786,22 @@ void Prisma::TriggerBack() {
     if (PrismaUI && createdView && isVisible) {
         PrismaUI->Invoke(view, "window.dispatchEvent(new CustomEvent('HardwareBack'));");
     }
+}
+
+void Prisma::ResetForLoad() {
+    g_isLevelUpMenuOpen = false;
+    g_selectedActorID = player_refid;
+    Hide();
+    if (auto* queue = RE::UIMessageQueue::GetSingleton()) {
+        queue->AddMessage(RE::LevelUpMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
+        queue->AddMessage(RE::StatsMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
+    }
+    if (PrismaUI && createdView) PrismaUI->Destroy(view);
+    createdView = false;
+    isVisible = false;
+    isInspectorVisible = false;
+    hasInspectorInitialized = false;
+    view = {};
 }
 
 void Prisma::Hide() {

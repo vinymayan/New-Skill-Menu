@@ -220,6 +220,7 @@ interface SettingsData {
         resourceRewards?: ResourceReward[];
     };
     followerDetection?: {
+        enabled?: boolean;
         currentFollowerFactions: string[];
         potentialFollowerFactions: string[];
         allowHumanoidTeammates: boolean;
@@ -354,7 +355,7 @@ const LockedTreeNotice = ({ treeData, formLists, className = '' }: {
             <ul className="locked-req-list">
                 {treeData.treeRequirements.map((req, idx) => (
                     <li key={idx} className={req.isMet ? 'req-met' : 'req-unmet'}>
-                        {req.isNot && <span style={{ color: '#f44336', fontWeight: 'bold', marginRight: '5px' }}>[NOT] </span>}
+                        {req.isNot && <span style={{ fontWeight: 'bold', marginRight: '5px' }}>[NOT] </span>}
                         {t(`reqs.${req.type}`, {
                             val: resolveReqValue(req),
                             target: resolveText(req.target || treeData.displayName || treeData.name, false)
@@ -1875,6 +1876,7 @@ const SettingsModal = ({ settings, rules, selectedActor, customResources, formLi
                                         onChange={event => setSettingsData(previous => ({
                                             ...previous,
                                             followerDetection: {
+                                                ...previous.followerDetection,
                                                 currentFollowerFactions: event.target.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
                                                 potentialFollowerFactions: previous.followerDetection?.potentialFollowerFactions || [],
                                                 allowHumanoidTeammates: previous.followerDetection?.allowHumanoidTeammates ?? true,
@@ -1889,6 +1891,7 @@ const SettingsModal = ({ settings, rules, selectedActor, customResources, formLi
                                         onChange={event => setSettingsData(previous => ({
                                             ...previous,
                                             followerDetection: {
+                                                ...previous.followerDetection,
                                                 currentFollowerFactions: previous.followerDetection?.currentFollowerFactions || [],
                                                 potentialFollowerFactions: event.target.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
                                                 allowHumanoidTeammates: previous.followerDetection?.allowHumanoidTeammates ?? true,
@@ -1904,6 +1907,7 @@ const SettingsModal = ({ settings, rules, selectedActor, customResources, formLi
                                         onChange={event => setSettingsData(previous => ({
                                             ...previous,
                                             followerDetection: {
+                                                ...previous.followerDetection,
                                                 currentFollowerFactions: previous.followerDetection?.currentFollowerFactions || [],
                                                 potentialFollowerFactions: previous.followerDetection?.potentialFollowerFactions || [],
                                                 allowHumanoidTeammates: event.target.checked,
@@ -1920,6 +1924,7 @@ const SettingsModal = ({ settings, rules, selectedActor, customResources, formLi
                                         onChange={event => setSettingsData(previous => ({
                                             ...previous,
                                             followerDetection: {
+                                                ...previous.followerDetection,
                                                 currentFollowerFactions: previous.followerDetection?.currentFollowerFactions || [],
                                                 potentialFollowerFactions: previous.followerDetection?.potentialFollowerFactions || [],
                                                 allowHumanoidTeammates: previous.followerDetection?.allowHumanoidTeammates ?? true,
@@ -4474,7 +4479,7 @@ function App() {
         setSelectedSkill(null);
         setIsLoaded(false);
         if (typeof (window as any).selectActor === 'function') {
-            (window as any).selectActor(JSON.stringify({ actorId }));
+            (window as any).selectActor(JSON.stringify({ actorId, session: (window as any).nsmSession }));
         }
     }, [playerData?.id]);
 
@@ -4489,7 +4494,7 @@ function App() {
 
         playSound('UISkillIncreaseSD');
         if (typeof (window as any).chooseAttribute === 'function') {
-            (window as any).chooseAttribute(JSON.stringify({ ...payload, actorId: payload.actorId || playerData?.id }));
+            (window as any).chooseAttribute(JSON.stringify({ ...payload, session: (window as any).nsmSession, actorId: payload.actorId || playerData?.id }));
         }
     }, [playerData?.id]);
 
@@ -4498,7 +4503,7 @@ function App() {
             const cost = confirmingPerk.perkCost ?? 0;
             const customCosts = (confirmingPerk.customCosts || []).filter(c => c.resourceId && (c.amount ?? 0) >= 1 && customResources.some(res => res.id === c.resourceId));
             playSound('UISkillsPerkSelect2D');
-            (window as any).unlockPerk(JSON.stringify({ id: confirmingPerk.perk, cost, customCosts, actorId: playerData?.id }));
+            (window as any).unlockPerk(JSON.stringify({ session: (window as any).nsmSession, id: confirmingPerk.perk, cost, customCosts, actorId: playerData?.id }));
         }
         setConfirmingPerk(null);
     }, [confirmingPerk, customResources, playerData?.id]);
@@ -4671,7 +4676,7 @@ function App() {
             message: t('legendary.confirm_message', { treeName, resetLevel: resetLvl }) + refundSummary,
             action: () => {
                 if (typeof (window as any).legendarySkill === 'function') {
-                    (window as any).legendarySkill(JSON.stringify({ treeName, actorId: playerData?.id }));
+                    (window as any).legendarySkill(JSON.stringify({ session: (window as any).nsmSession, treeName, actorId: playerData?.id }));
                 }
                 setConfirmAction(null);
             }
@@ -4698,7 +4703,7 @@ function App() {
             message: t('reset_all.confirm_message') + refundSummary,
             action: () => {
                 if (typeof (window as any).resetAllPerks === 'function') {
-                    (window as any).resetAllPerks(JSON.stringify({ actorId: playerData?.id }));
+                    (window as any).resetAllPerks(JSON.stringify({ session: (window as any).nsmSession, actorId: playerData?.id }));
                 }
                 setConfirmAction(null);
             }

@@ -405,6 +405,7 @@ void ModMenu::BaseRender() {
 
     if (ImGui::CollapsingHeader("Follower detection")) {
         auto& followers = settings["followerDetection"];
+        changed |= DrawBool(followers, "enabled", "Habilitar follower skill menu", true);
         changed |= DrawBool(followers, "allowHumanoidTeammates", "Allow humanoid PlayerTeammate actors", true);
         changed |= DrawBool(followers, "allowSummoned", "Allow summoned teammates");
         for (const auto& [key, label] : std::array{
@@ -609,7 +610,8 @@ void ModMenu::MaintenanceRender() {
     }
     if (ImGui::Combo("Actor", &selected, names.data(), static_cast<int>(names.size()))) maintenanceActorID = actors[selected]->GetFormID();
     if (ImGui::Button("Reset all purchased perks")) ImGui::OpenPopup("Confirm perk reset");
-    if (ImGui::BeginPopupModal("Confirm perk reset")) {
+    ImGui::SetNextWindowSize(ImGui::ImVec2(ImGui::GetFontSize() * 28.0f, 0.0f));
+    if (ImGui::BeginPopupModal("Confirm perk reset", nullptr, ImGui::ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextWrapped("Reset all perks purchased through NSM for %s?", actors[selected]->GetName());
         if (ImGui::Button("Confirm")) {
             const auto effective = GetEffectiveSettings(actors[selected]->GetLevel(), actors[selected]);
