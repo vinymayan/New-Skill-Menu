@@ -12,6 +12,7 @@ public:
     static void PreloadLocalization();
     static void Install();
     static void SendUpdateToUI();
+    static void NotifySkillIncrease();
     static void Show();
     static void TriggerExitAnimation();
     static void Hide();

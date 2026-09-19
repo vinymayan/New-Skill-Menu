@@ -3639,7 +3639,7 @@ const ConfirmPerkModal = ({ perkName, cost, customCosts, customResources, onConf
                     <div style={{ marginBottom: '15px' }}>
                         {payableCustomCosts.map(c => {
                             const res = customResources.find(r => r.id === c.resourceId);
-                            return <p key={c.resourceId} style={{ margin: '5px 0', fontSize: '1.1rem', color: '#ffb74d' }}>- {c.amount}x {res ? resolveText(res.name, false) : c.resourceId}</p>
+                            return <p key={c.resourceId} style={{ margin: '5px 0', fontSize: '1.1rem', color: 'var(--nsm-primary-text)' }}>- {c.amount}x {res ? resolveText(res.name, false) : c.resourceId}</p>
                         })}
                     </div>
                 )}

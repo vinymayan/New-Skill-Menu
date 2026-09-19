@@ -609,6 +609,10 @@ void ModMenu::MaintenanceRender() {
         if (actors[i]->GetFormID() == maintenanceActorID) selected = static_cast<int>(i);
     }
     if (ImGui::Combo("Actor", &selected, names.data(), static_cast<int>(names.size()))) maintenanceActorID = actors[selected]->GetFormID();
+    if (ImGui::Button(GetLoc("menu.reapply_purchased_perks", "Reapply purchased perks"))) {
+        Manager::GetSingleton()->RehydratePurchasedPerks(actors[selected]);
+        NotifyPrisma();
+    }
     if (ImGui::Button("Reset all purchased perks")) ImGui::OpenPopup("Confirm perk reset");
     ImGui::SetNextWindowSize(ImGui::ImVec2(ImGui::GetFontSize() * 28.0f, 0.0f));
     if (ImGui::BeginPopupModal("Confirm perk reset", nullptr, ImGui::ImGuiWindowFlags_AlwaysAutoResize)) {

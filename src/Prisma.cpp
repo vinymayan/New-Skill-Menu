@@ -1,4 +1,4 @@
-#include "FollowerDistribution.h"
+﻿#include "FollowerDistribution.h"
 #include "Prisma.h"
 #include "Manager.h"
 #include "Configuration.h"
@@ -10,6 +10,10 @@
 #include "RosterService.h"
 #include "SnapshotService.h"
 
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
 using json = nlohmann::json;
 
 PRISMA_UI_API::IVPrismaUI1* PrismaUI = nullptr;
@@ -20,6 +24,37 @@ static json g_mergedLocCache;
 static bool g_locLoaded = false;
 static bool g_isLevelUpMenuOpen = false;
 static RE::FormID g_selectedActorID = player_refid;
+
+namespace {
+    std::mutex g_freezeTimerMutex;
+    std::jthread g_freezeTimer;
+
+    void CancelFreezeTimer() {
+        std::lock_guard lock(g_freezeTimerMutex);
+        if (g_freezeTimer.joinable()) g_freezeTimer.request_stop();
+    }
+
+    void ScheduleFreezeTimer() {
+        std::lock_guard lock(g_freezeTimerMutex);
+        g_freezeTimer = std::jthread([](std::stop_token stopToken) {
+            std::mutex waitMutex;
+            std::condition_variable_any wake;
+            std::unique_lock lock(waitMutex);
+            wake.wait_for(lock, stopToken, std::chrono::seconds(300), [] { return false; });
+            if (stopToken.stop_requested()) return;
+
+            SKSE::GetTaskInterface()->AddUITask([stopToken]() {
+                if (stopToken.stop_requested() || !isVisible) return;
+                const auto ui = RE::UI::GetSingleton();
+                const auto focusMenu = ui ? ui->GetMenu("PrismaUI_FocusMenu") : nullptr;
+                if (focusMenu) {
+                    focusMenu->menuFlags.set(RE::UI_MENU_FLAGS::kFreezeFrameBackground,
+                                             RE::UI_MENU_FLAGS::kTopmostRenderedMenu);
+                }
+            });
+        });
+    }
+}
 
 json GetLevelRules();
 json GetSettings();
@@ -2905,6 +2940,18 @@ void Prisma::SendUpdateToUI() {
         logger::debug("Dados atualizados enviados para a UI.");
     }
 }
+
+void Prisma::NotifySkillIncrease() {
+    SKSE::GetTaskInterface()->AddUITask([]() {
+        if (!PrismaUI || !createdView || !isVisible) return;
+        const auto ui = RE::UI::GetSingleton();
+        const auto focusMenu = ui ? ui->GetMenu("PrismaUI_FocusMenu") : nullptr;
+        if (focusMenu) {
+            focusMenu->menuFlags.reset(RE::UI_MENU_FLAGS::kFreezeFrameBackground);
+        }
+        ScheduleFreezeTimer();
+    });
+}
 // Resgata o código (Chamado pela UI)
 static void RedeemCodeFromUI(const char* args) {
     if (!args) return;
@@ -3610,9 +3657,9 @@ void Prisma::Show() {
                 const auto ui = RE::UI::GetSingleton();
                 const auto focusMenu = ui ? ui->GetMenu("PrismaUI_FocusMenu") : nullptr;
                 if (focusMenu) {
-                    focusMenu->menuFlags.set(RE::UI_MENU_FLAGS::kFreezeFrameBackground,
-                                            RE::UI_MENU_FLAGS::kTopmostRenderedMenu);
+                    focusMenu->menuFlags.set(RE::UI_MENU_FLAGS::kTopmostRenderedMenu);
                 }
+                ScheduleFreezeTimer();
             });
             PrismaUI->RegisterJSListener(currentView, "hideWindow", [](const char*) {
                 logger::debug("Recebida requisicao para fechar o menu Prisma.");
@@ -3789,6 +3836,7 @@ void Prisma::TriggerBack() {
 }
 
 void Prisma::ResetForLoad() {
+    CancelFreezeTimer();
     g_isLevelUpMenuOpen = false;
     g_selectedActorID = player_refid;
     Hide();
@@ -3809,6 +3857,7 @@ void Prisma::Hide() {
 
     if (createdView && isVisible) {
         logger::debug("Escondendo menu Prisma...");
+        CancelFreezeTimer();
         PrismaUI->Unfocus(view);
         PrismaUI->Hide(view);
        //RE::UIBlurManager::GetSingleton()->DecrementBlurCount();

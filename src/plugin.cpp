@@ -482,6 +482,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         Manager::GetSingleton()->LoadCustomSkills();
         Prisma::PreloadLocalization();
         PlayerLevel::Register();
+        PlayerSkillIncrease::Register();
         FollowerDistribution::RegisterEvents();
         Prisma::Install();
         if (GetModuleHandleA("MouseMode.dll")) {

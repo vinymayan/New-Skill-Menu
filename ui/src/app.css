@@ -1681,7 +1681,8 @@ body {
     border: 1px solid rgba(255,255,255,0.25);
     color: var(--nsm-primary-text, #fff);
     min-height: var(--nsm-level-up-button-size, 41px);
-    padding: 0 var(--nsm-level-up-space-2, 17px);
+    padding: 0 var(--nsm-level-up-space-3, 26px);
+    justify-self: start;
     font-family: 'Sovngarde', sans-serif;
     font-size: var(--nsm-level-up-text-font-size, 1.15rem);
     letter-spacing: 1px;
@@ -3427,6 +3428,7 @@ body {
     min-width: 0;
     white-space: normal;
     overflow-wrap: anywhere;
+    color: var(--nsm-primary-text);
 }
 
 .resource-item span:last-child {

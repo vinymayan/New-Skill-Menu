@@ -29,6 +29,7 @@ public:
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        Prisma::NotifySkillIncrease();
         logger::info("Player subiu para o nível {}. Iniciando scan de regras para atores próximos.", a_event->newLevel);
 
         // 1. Aplicar regras ao próprio Player
@@ -50,6 +51,31 @@ public:
         }
         else {
             logger::error("Falha ao obter RE::LevelIncrease::GetEventSource()!");
+        }
+    }
+};
+
+class PlayerSkillIncrease : public RE::BSTEventSink<RE::SkillIncrease::Event> {
+public:
+    static PlayerSkillIncrease* GetSingleton() {
+        static PlayerSkillIncrease singleton;
+        return &singleton;
+    }
+
+    RE::BSEventNotifyControl ProcessEvent(
+        const RE::SkillIncrease::Event* a_event,
+        RE::BSTEventSource<RE::SkillIncrease::Event>*) override {
+        if (a_event) Prisma::NotifySkillIncrease();
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    static void Register() {
+        if (auto eventSource = RE::SkillIncrease::GetEventSource()) {
+            eventSource->AddEventSink(GetSingleton());
+            logger::info("PlayerSkillIncrease sink registrado com sucesso.");
+        }
+        else {
+            logger::error("Falha ao obter RE::SkillIncrease::GetEventSource()!");
         }
     }
 };
