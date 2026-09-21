@@ -6,6 +6,7 @@ namespace ModMenu {
     void Register();
     void UIRender();
     void BaseRender();
+    void FollowerRender();
     void RulesRender();
     void CategoriesRender();
     void ResourcesRender();

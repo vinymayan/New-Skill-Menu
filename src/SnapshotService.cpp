@@ -1,4 +1,4 @@
-#include "SnapshotService.h"
+﻿#include "SnapshotService.h"
 
 #include "ActorIdentityService.h"
 #include "Manager.h"
@@ -43,7 +43,7 @@ SnapshotService::PerkOwnership SnapshotService::GetPerkOwnership(
             perk->GetFormID();
         static std::unordered_set<std::uint64_t> logged;
         if (logged.insert(key).second) {
-            logger::info(
+            logger::debug(
                 "[ActorPerks] actor='{}' actorID={:08X} perk='{}' perkID={:08X} "
                 "source={} runtime={} actorBase={} templateBase={} ledger={}",
                 actor->GetName(),
@@ -68,8 +68,9 @@ nlohmann::json SnapshotService::BuildActorSummary(RE::Actor* actor)
         { "id", ActorIdentityService::RuntimeKey(actor) },
         { "stableKey", ActorIdentityService::StableKey(actor) },
         { "ruleKey", ActorIdentityService::RuleKey(actor) },
+        { "baseRuleKey", ActorIdentityService::BaseRuleKey(actor->GetActorBase()) },
         { "name", actor->GetName() },
-        { "level", actor->GetLevel() },
+        { "level", Manager::GetSingleton()->GetActorProgressionLevel(actor) },
         { "kind", actor->IsPlayerRef() ? "player" : "follower" }
     };
 }

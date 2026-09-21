@@ -1,4 +1,4 @@
-#include "ResourceService.h"
+﻿#include "ResourceService.h"
 
 namespace
 {
@@ -268,7 +268,7 @@ bool ResourceService::Credit(
         error = "resource_credit_failed:" + std::string(resourceId);
         return false;
     }
-    logger::info(
+    logger::debug(
         "[Economy] Credited resource={} amount={} actor={:08X} shared={}",
         resourceId,
         amount,

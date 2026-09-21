@@ -154,6 +154,7 @@ namespace FollowerDistribution
     bool Loading() { return loading; }
     std::uint64_t Epoch() { return epoch; }
     bool Busy(RE::Actor* actor) { return loading || (actor && busy.contains(actor->GetFormID())); }
+    bool Failed(RE::Actor* actor) { return actor && failed.contains(actor->GetFormID()); }
     bool Ready()
     {
         auto* wet = WhoEditThat::API::GetAPI();

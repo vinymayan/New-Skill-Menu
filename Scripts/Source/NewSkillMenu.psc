@@ -3,11 +3,11 @@ Scriptname NewSkillMenu
 ; Retorna a versão da API do SkillMenu (Definida em SkillMenuAPI.h)
 Int Function GetAPIVersion() Global Native
 
-; Adiciona uma quantidade específica de experiência a uma custom skill.
+; Adiciona experiência a uma skill registrada no NSM, custom ou vanilla.
 ; Equivalente a: Manager::GetSingleton()->AddCustomSkillXP(skillId, xp)
 Function AddCustomSkillXP(String skillId, Float xp) Global Native
 
-; Retorna o nível BASE atual de uma custom skill (Sem bônus).
+; Retorna o nível BASE atual de uma skill registrada (Sem bônus).
 ; Usa o backend actor-aware com o player como ator padrao
 Int Function GetCustomSkillLevel(String skillId) Global Native
 
@@ -39,7 +39,7 @@ Function ModCustomSkillBonus(String skillId, Int amount) Global Native
 ; Define o bônus da skill para um valor exato (Ex: SetCustomSkillBonus("Athletics", 0) para limpar)
 Function SetCustomSkillBonus(String skillId, Int amount) Global Native
 ; =======================================================
-; V3 API - FORMID-AWARE CUSTOM SKILLS/PERKS
+; V3 API - FORMID-AWARE SKILLS/PERKS (CUSTOM OU VANILLA)
 ; =======================================================
 
 Function AddCustomSkillXPForActor(Int actorFormID, String skillId, Float xp) Global Native
@@ -77,10 +77,10 @@ Float Function GetActorResource(Int actorFormID, String resourceId) Global Nativ
 Bool Function ModActorResource(Int actorFormID, String resourceId, Float amount) Global Native
 
 ; =======================================================
-; V5 API - AVAILABLE CUSTOM SKILLS
+; V5 API - AVAILABLE SKILLS (CUSTOM E VANILLA)
 ; =======================================================
 
-; Returns the IDs accepted by AddCustomSkillXP and its actor-aware variant.
+; Returns every custom or vanilla ID accepted by the XP functions.
 String[] Function GetAvailableSkills() Global Native
 
 ; Adiciona ou subtrai do nível BASE. O valor final não fica abaixo de zero.

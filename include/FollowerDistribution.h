@@ -9,6 +9,7 @@ namespace FollowerDistribution
     using Perks = std::set<RE::FormID>;
     using Completion = std::function<void(bool)>;
     bool Busy(RE::Actor* actor);
+    bool Failed(RE::Actor* actor);
     bool Ready();
     bool Loading();
     std::uint64_t Epoch();

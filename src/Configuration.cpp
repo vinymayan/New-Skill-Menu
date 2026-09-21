@@ -12,7 +12,9 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <unordered_map>
 
@@ -40,6 +42,7 @@ namespace {
 
     RE::FormID ParseFormID(const std::string& value) {
         if (value.empty()) return 0;
+        if (auto form = RE::TESForm::LookupByEditorID(value)) return form->GetFormID();
         if (const auto separator = value.find('|'); separator != std::string::npos) {
             try {
                 const auto localID = static_cast<RE::FormID>(std::stoul(value.substr(separator + 1), nullptr, 16));
@@ -58,6 +61,64 @@ namespace {
         if (!file) return std::format("{:X}", formID);
         const auto localID = (formID & 0xFF000000) == 0xFE000000 ? formID & 0xFFF : formID & 0xFFFFFF;
         return std::format("{}|{:X}", file->GetFilename(), localID);
+    }
+
+    bool DrawSearchableCombo(const char* label, int& selected, const std::vector<const char*>& items,
+        float width = 360.0f, const char* missingPreview = nullptr) {
+        if (items.empty()) return false;
+        const int current = selected >= 0 && selected < static_cast<int>(items.size()) ? selected : -1;
+        ImGui::SetNextItemWidth(width);
+        ImGui::SetNextWindowSizeConstraints({380.0f, 260.0f}, {380.0f, 260.0f});
+        if (!ImGui::BeginCombo(label, current >= 0 ? items[current] :
+            (missingPreview ? missingPreview : ModMenu::GetLoc("common.select", "Select...")))) return false;
+
+        static std::unordered_map<ImGui::ImGuiID, std::string> searches;
+        auto& search = searches[ImGui::GetID("##search")];
+        if (ImGui::IsWindowAppearing()) {
+            search.clear();
+            ImGui::SetKeyboardFocusHere();
+        }
+        char buffer[256]{};
+        strcpy_s(buffer, search.c_str());
+        ImGui::SetNextItemWidth(-1.0f);
+        const auto searchLabel = std::string(ModMenu::GetLoc("common.search_short", "Search...")) + "##search";
+        if (ImGui::InputText(searchLabel.c_str(), buffer, sizeof(buffer))) search = buffer;
+        ImGui::Separator();
+
+        const auto needle = ToLower(search);
+        std::vector<int> visible;
+        visible.reserve(items.size());
+        for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+            if (needle.empty() || ToLower(items[i]).find(needle) != std::string::npos) visible.push_back(i);
+        }
+        bool changed = false;
+        ImGui::BeginChild("##results", {0.0f, 190.0f}, false);
+        if (visible.empty()) {
+            ImGui::TextDisabled("%s", ModMenu::GetLoc("common.no_items_found", "No items found."));
+        } else {
+            auto clipper = std::unique_ptr<ImGui::ImGuiListClipper, decltype(&ImGui::ImGuiListClipperManager::Destroy)>(
+                ImGui::ImGuiListClipperManager::Create(), &ImGui::ImGuiListClipperManager::Destroy);
+            ImGui::ImGuiListClipperManager::Begin(clipper.get(), static_cast<int>(visible.size()), 0.0f);
+            while (ImGui::ImGuiListClipperManager::Step(clipper.get())) {
+                for (int row = clipper->DisplayStart; row < clipper->DisplayEnd; ++row) {
+                    const int index = visible[row];
+                    ImGui::PushID(index);
+                    const bool isSelected = current == index;
+                    if (ImGui::Selectable(items[index], isSelected)) {
+                        selected = index;
+                        search.clear();
+                        changed = true;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    if (isSelected) ImGui::SetItemDefaultFocus();
+                    ImGui::PopID();
+                }
+            }
+            ImGui::ImGuiListClipperManager::End(clipper.get());
+        }
+        ImGui::EndChild();
+        ImGui::EndCombo();
+        return changed;
     }
 
     bool DrawDropdown(const char* label, const std::string& category, RE::FormID& currentFormID, float customWidth = -1.0f) {
@@ -82,31 +143,10 @@ namespace {
         if (const auto hashPos = displayLabel.find("##"); hashPos != std::string::npos) displayLabel.resize(hashPos);
         ImGui::Text("%s:", displayLabel.c_str());
         ImGui::SameLine();
-        if (customWidth > 0.0f) ImGui::SetNextItemWidth(customWidth);
-
-        if (ImGui::BeginCombo("##drop", comboItems[localSelection])) {
-            static std::map<std::string, std::string> searchBuffers;
-            char searchBuf[256]{};
-            if (searchBuffers.contains(label)) strcpy_s(searchBuf, searchBuffers[label].c_str());
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::InputText("##busca", searchBuf, sizeof(searchBuf))) searchBuffers[label] = searchBuf;
-            ImGui::Separator();
-
-            const auto search = ToLower(searchBuf);
-            ImGui::BeginChild("##scroll", ImGui::ImVec2(0, 200), false);
-            for (int i = 0; i < static_cast<int>(comboItems.size()); ++i) {
-                if (!search.empty() && ToLower(comboItems[i]).find(search) == std::string::npos) continue;
-                const bool selected = localSelection == i;
-                if (ImGui::Selectable(comboItems[i], selected)) {
-                    const int originalIndex = mapToFull[i];
-                    currentFormID = originalIndex < 0 ? 0 : fullList[originalIndex].formID;
-                    searchBuffers[label].clear();
-                    changed = true;
-                }
-                if (selected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndChild();
-            ImGui::EndCombo();
+        if (DrawSearchableCombo("##drop", localSelection, comboItems, customWidth > 0.0f ? customWidth : 360.0f)) {
+            const int originalIndex = mapToFull[localSelection];
+            currentFormID = originalIndex < 0 ? 0 : fullList[originalIndex].formID;
+            changed = true;
         }
         ImGui::PopID();
         return changed;
@@ -117,6 +157,114 @@ namespace {
         if (!DrawDropdown(label, category, formID, 360.0f)) return false;
         value = NormalizeFormID(formID);
         return true;
+    }
+
+    RE::FormID ResolveStoredForm(const json& value) {
+        if (value.is_string()) return ParseFormID(value.get<std::string>());
+        if (!value.is_object()) return 0;
+        const auto editorID = value.find("editorID");
+        if (editorID != value.end() && editorID->is_string() && !editorID->empty()) {
+            if (auto form = RE::TESForm::LookupByEditorID(editorID->get<std::string>())) return form->GetFormID();
+        }
+        const auto fallback = value.find("form");
+        return fallback != value.end() && fallback->is_string() ? ParseFormID(fallback->get<std::string>()) : 0;
+    }
+
+    json StoreForm(RE::FormID formID) {
+        json value = json::object();
+        auto form = RE::TESForm::LookupByID(formID);
+        if (!form) return value;
+        std::string savedEditorID;
+        if (const auto editorID = form->GetFormEditorID(); editorID && *editorID) {
+            savedEditorID = editorID;
+        }
+        if (savedEditorID.empty()) {
+            for (const auto& info : Manager::GetSingleton()->GetList("Faction")) {
+                if (info.formID == formID) {
+                    savedEditorID = info.editorID;
+                    break;
+                }
+            }
+        }
+        if (!savedEditorID.empty()) value["editorID"] = savedEditorID;
+        value["form"] = NormalizeFormID(formID);
+        return value;
+    }
+
+    std::string GetFactionLabel(const json& value) {
+        const auto formID = ResolveStoredForm(value);
+        for (const auto& info : Manager::GetSingleton()->GetList("Faction")) {
+            if (info.formID == formID) return info.cachedDisplayName;
+        }
+        if (value.is_object()) {
+            const auto editorID = value.find("editorID");
+            if (editorID != value.end() && editorID->is_string() && !editorID->empty()) {
+                return editorID->get<std::string>();
+            }
+            const auto fallback = value.find("form");
+            return fallback != value.end() && fallback->is_string() ?
+                fallback->get<std::string>() : "Missing faction";
+        }
+        return value.is_string() ? value.get<std::string>() : "Missing faction";
+    }
+
+    bool DrawFactionList(
+        json& followers,
+        const char* key,
+        const char* title,
+        const char* vanillaFaction)
+    {
+        bool changed = false;
+        ImGui::PushID(key);
+        ImGui::SeparatorText(title);
+        if (vanillaFaction) {
+            ImGui::TextDisabled("Built-in: %s", GetFactionLabel(json(vanillaFaction)).c_str());
+        }
+
+        auto entries = followers.value(key, json::array());
+        if (!entries.is_array()) entries = json::array();
+        for (auto& entry : entries) {
+            if (const auto formID = ResolveStoredForm(entry); formID != 0) {
+                const auto normalized = StoreForm(formID);
+                if (entry != normalized) {
+                    entry = normalized;
+                    changed = true;
+                }
+            }
+        }
+        int removeIndex = -1;
+        for (std::size_t index = 0; index < entries.size(); ++index) {
+            ImGui::PushID(static_cast<int>(index));
+            ImGui::BulletText("%s", GetFactionLabel(entries[index]).c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove")) removeIndex = static_cast<int>(index);
+            ImGui::PopID();
+        }
+        if (removeIndex >= 0) {
+            entries.erase(entries.begin() + removeIndex);
+            changed = true;
+        }
+
+        static std::map<std::string, RE::FormID> selected;
+        auto& candidate = selected[key];
+        const auto pickerLabel = std::string("Add faction##") + key;
+        DrawDropdown(pickerLabel.c_str(), "Faction", candidate, 360.0f);
+        ImGui::SameLine();
+        const auto addLabel = std::string("Add##") + key;
+        if (ImGui::Button(addLabel.c_str()) && candidate != 0) {
+            const bool duplicate = (vanillaFaction && candidate == ParseFormID(vanillaFaction)) ||
+                std::ranges::any_of(entries, [&](const auto& entry) {
+                    return ResolveStoredForm(entry) == candidate;
+                });
+            if (!duplicate) {
+                entries.push_back(StoreForm(candidate));
+                changed = true;
+            }
+            candidate = 0;
+        }
+        if (changed) followers[key] = std::move(entries);
+        ImGui::PopID();
+        return changed;
     }
 
     bool DrawBool(json& parent, const char* key, const char* label, bool fallback = false) {
@@ -219,19 +367,38 @@ namespace {
     }
 
     bool DrawActorRule(json& rule, const char* label) {
+        auto* manager = Manager::GetSingleton();
+        if (manager->GetList("NPC").empty()) manager->RefreshLists("NPC_");
+        const auto& npcs = manager->GetList("NPC");
         const auto actors = RosterService::GetSelectableActors(GetSettings());
-        if (actors.empty()) return false;
-        int selected = 0;
-        std::vector<const char*> names;
-        names.reserve(actors.size());
         const auto currentKey = rule.value("actorKey", "");
-        for (std::size_t i = 0; i < actors.size(); ++i) {
-            names.push_back(actors[i]->GetName());
-            if (ActorIdentityService::RuleKey(actors[i]) == currentKey) selected = static_cast<int>(i);
+        const auto baseID = currentKey.starts_with("base:") ? ParseFormID(currentKey.substr(5)) : 0;
+        std::vector<std::string> referenceLabels;
+        referenceLabels.reserve(actors.size());
+        std::vector<const char*> options;
+        options.reserve(actors.size() + npcs.size());
+        int selected = -1;
+        for (auto actor : actors) {
+            referenceLabels.push_back(std::format("Reference: {} [{:08X}]", actor->GetName(), actor->GetFormID()));
+            if (ActorIdentityService::RuleKey(actor) == currentKey) selected = static_cast<int>(options.size());
+            options.push_back(referenceLabels.back().c_str());
         }
-        if (!ImGui::Combo(label, &selected, names.data(), static_cast<int>(names.size()))) return false;
-        rule["actorKey"] = ActorIdentityService::RuleKey(actors[selected]);
-        rule["actorName"] = actors[selected]->GetName();
+        for (const auto& npc : npcs) {
+            if (npc.formID == baseID) selected = static_cast<int>(options.size());
+            options.push_back(npc.cachedDisplayName.c_str());
+        }
+        const auto missingPreview = rule.value("actorName", std::string(ModMenu::GetLoc("common.select", "Select...")));
+        if (!DrawSearchableCombo(label, selected, options, 360.0f, missingPreview.c_str())) return false;
+        if (selected < static_cast<int>(actors.size())) {
+            rule["actorKey"] = ActorIdentityService::RuleKey(actors[selected]);
+            rule["actorName"] = actors[selected]->GetName();
+        } else {
+            const auto& npc = npcs[selected - static_cast<int>(actors.size())];
+            auto* base = RE::TESForm::LookupByID<RE::TESNPC>(npc.formID);
+            if (!base) return false;
+            rule["actorKey"] = ActorIdentityService::BaseRuleKey(base);
+            rule["actorName"] = npc.GetDisplayName();
+        }
         return true;
     }
 }
@@ -263,13 +430,15 @@ void ModMenu::UIRender() {
     int preview = 0;
     const auto current = settings.value("columnPreviewMode", "full");
     for (int i = 0; i < 4; ++i) if (current == previewValues[i]) preview = i;
-    if (ImGui::Combo(GetLoc("ui_options.column_preview_label", "Column preview"), &preview, previewModes, 4)) {
+    if (DrawSearchableCombo(GetLoc("ui_options.column_preview_label", "Column preview"), preview,
+            std::vector<const char*>(std::begin(previewModes), std::end(previewModes)))) {
         settings["columnPreviewMode"] = previewValues[preview];
         changed = true;
     }
     changed |= DrawBool(settings, "hideLockedTreeNames", GetLoc("ui_options.hide_locked_names", "Hide locked tree names"), true);
     changed |= DrawBool(settings, "hideLockedTreeBG", GetLoc("ui_options.hide_locked_bg", "Hide locked tree backgrounds"));
     changed |= DrawBool(settings, "performanceMode", GetLoc("ui_options.performance_mode", "Performance mode"));
+    changed |= DrawBool(settings, "doNotPauseMenu", GetLoc("ui_options.do_not_pause_menu", "Do not pause menu"));
     changed |= DrawBool(settings, "hidePerkNames", GetLoc("ui_options.hide_perk_names", "Hide perk names"));
 
     if (ImGui::CollapsingHeader(GetLoc("ui_options.typography", "Typography"), ImGui::ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -382,7 +551,9 @@ void ModMenu::BaseRender() {
         const std::array<const char*, 3> values = { "none", "auto", "linked" };
         int method = 0;
         for (int i = 0; i < 3; ++i) if (base.value("carryWeightMethod", "none") == values[i]) method = i;
-        if (ImGui::Combo("Method", &method, methods, 3)) { base["carryWeightMethod"] = values[method]; changed = true; }
+        if (DrawSearchableCombo("Method", method, std::vector<const char*>(std::begin(methods), std::end(methods)))) {
+            base["carryWeightMethod"] = values[method]; changed = true;
+        }
         changed |= DrawFloat(base, "carryWeightIncrease", "Carry weight increase", 0.0f, 0.0f, 10000.0f);
         if (method == 2) {
             auto linked = base.value("carryWeightLinkedAttributes", json::array());
@@ -403,28 +574,35 @@ void ModMenu::BaseRender() {
         }
     }
 
-    if (ImGui::CollapsingHeader("Follower detection")) {
-        auto& followers = settings["followerDetection"];
-        changed |= DrawBool(followers, "enabled", "Habilitar follower skill menu", true);
-        changed |= DrawBool(followers, "allowHumanoidTeammates", "Allow humanoid PlayerTeammate actors", true);
-        changed |= DrawBool(followers, "allowSummoned", "Allow summoned teammates");
-        for (const auto& [key, label] : std::array{
-            std::pair{ "currentFollowerFactions", "Current follower factions (one Plugin|FormID per line)" },
-            std::pair{ "potentialFollowerFactions", "Potential follower factions (one Plugin|FormID per line)" } }) {
-            std::string text;
-            for (const auto& item : followers.value(key, json::array())) {
-                if (!text.empty()) text += '\n';
-                text += item.get<std::string>();
-            }
-            char buffer[2048]{};
-            strcpy_s(buffer, text.c_str());
-            if (ImGui::InputTextMultiline(label, buffer, sizeof(buffer), ImGui::ImVec2(-1, 100))) {
-                json values = json::array();
-                std::istringstream lines(buffer);
-                for (std::string line; std::getline(lines, line);) if (!line.empty()) values.push_back(line);
-                followers[key] = values;
-                changed = true;
-            }
+    if (changed) { SaveSettingsToFile(settings); NotifyPrisma(); }
+}
+
+void ModMenu::FollowerRender() {
+    auto settings = GetSettings();
+    auto& followers = settings["followerDetection"];
+    bool changed = DrawBool(followers, "enabled", "Enable follower skill menu", true);
+    if (followers.value("enabled", true)) {
+        changed |= DrawBool(followers, "skillXPAdvancesLevel", "Skill XP advances follower level");
+        changed |= DrawBool(followers, "allowPlayerTeammates", "Allow PlayerTeammates", true);
+        changed |= DrawBool(followers, "allowSummoned", "Allow summons");
+        if (ImGui::CollapsingHeader("Additional follower factions")) {
+            changed |= DrawFactionList(
+                followers,
+                "currentFollowerFactions",
+                "Current follower factions",
+                "Skyrim.esm|1CA7D");
+            changed |= DrawFactionList(
+                followers,
+                "potentialFollowerFactions",
+                "Potential follower factions",
+                "Skyrim.esm|5C84D");
+        }
+        if (ImGui::CollapsingHeader("Excluded follower factions")) {
+            changed |= DrawFactionList(
+                followers,
+                "excludedFollowerFactions",
+                "Actors in these factions never appear in the follower menu",
+                nullptr);
         }
     }
     if (changed) { SaveSettingsToFile(settings); NotifyPrisma(); }
@@ -444,9 +622,15 @@ void ModMenu::RulesRender() {
             const std::array<const char*, 4> scopeValues = { "all", "player", "followers", "actor" };
             int scope = 1;
             for (int i = 0; i < 4; ++i) if (rule.value("scope", "player") == scopeValues[i]) scope = i;
-            if (ImGui::Combo("Scope", &scope, scopes, 4)) {
+            if (DrawSearchableCombo("Scope", scope, std::vector<const char*>(std::begin(scopes), std::end(scopes)))) {
                 rule["scope"] = scopeValues[scope];
-                if (scope != 3) { rule.erase("actorKey"); rule.erase("actorName"); }
+                if (scope == 3) {
+                    const auto actors = RosterService::GetSelectableActors(GetSettings());
+                    if (!actors.empty()) {
+                        rule["actorKey"] = ActorIdentityService::RuleKey(actors.front());
+                        rule["actorName"] = actors.front()->GetName();
+                    }
+                } else { rule.erase("actorKey"); rule.erase("actorName"); }
                 changed = true;
             }
             if (scope == 3) changed |= DrawActorRule(rule, "Actor");
@@ -477,7 +661,7 @@ void ModMenu::RulesRender() {
                         if (resources[resourceIndex].value("id", "") == reward.value("resourceId", "")) selectedResource = static_cast<int>(resourceIndex);
                     }
                     for (const auto& label : resourceLabels) resourceNames.push_back(label.c_str());
-                    if (!resources.empty() && ImGui::Combo("Resource", &selectedResource, resourceNames.data(), static_cast<int>(resourceNames.size()))) {
+                    if (DrawSearchableCombo("Resource", selectedResource, resourceNames)) {
                         reward["resourceId"] = resources[selectedResource].value("id", "");
                         changed = true;
                     }
@@ -603,12 +787,16 @@ void ModMenu::MaintenanceRender() {
     const auto actors = RosterService::GetSelectableActors(GetSettings());
     if (actors.empty()) return;
     int selected = 0;
+    std::vector<std::string> labels;
+    labels.reserve(actors.size());
     std::vector<const char*> names;
+    names.reserve(actors.size());
     for (std::size_t i = 0; i < actors.size(); ++i) {
-        names.push_back(actors[i]->GetName());
+        labels.push_back(std::format("{} [{:08X}]", actors[i]->GetName(), actors[i]->GetFormID()));
+        names.push_back(labels.back().c_str());
         if (actors[i]->GetFormID() == maintenanceActorID) selected = static_cast<int>(i);
     }
-    if (ImGui::Combo("Actor", &selected, names.data(), static_cast<int>(names.size()))) maintenanceActorID = actors[selected]->GetFormID();
+    if (DrawSearchableCombo("Actor", selected, names)) maintenanceActorID = actors[selected]->GetFormID();
     if (ImGui::Button(GetLoc("menu.reapply_purchased_perks", "Reapply purchased perks"))) {
         Manager::GetSingleton()->RehydratePurchasedPerks(actors[selected]);
         NotifyPrisma();
@@ -618,7 +806,8 @@ void ModMenu::MaintenanceRender() {
     if (ImGui::BeginPopupModal("Confirm perk reset", nullptr, ImGui::ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextWrapped("Reset all perks purchased through NSM for %s?", actors[selected]->GetName());
         if (ImGui::Button("Confirm")) {
-            const auto effective = GetEffectiveSettings(actors[selected]->GetLevel(), actors[selected]);
+            const auto effective = GetEffectiveSettings(
+                Manager::GetSingleton()->GetActorProgressionLevel(actors[selected]), actors[selected]);
             ResetService::Execute(actors[selected], {}, GetCustomResources(), effective.value("maxPerkPoints", 255), effective.value("maxResetsPerActor", -1), true);
             NotifyPrisma();
             ImGui::CloseCurrentPopup();
@@ -642,6 +831,7 @@ void ModMenu::Register() {
     SKSEMenuFramework::SetSection("NSM");
     SKSEMenuFramework::AddSectionItem(GetLoc("menu.ui_options", "UI Options"), UIRender);
     SKSEMenuFramework::AddSectionItem(GetLoc("menu.base_settings", "Base Settings"), BaseRender);
+    SKSEMenuFramework::AddSectionItem(GetLoc("menu.follower_settings", "Follower Settings"), FollowerRender);
     SKSEMenuFramework::AddSectionItem(GetLoc("menu.level_rules", "Level Rules"), RulesRender);
     SKSEMenuFramework::AddSectionItem(GetLoc("menu.categories", "Categories"), CategoriesRender);
     SKSEMenuFramework::AddSectionItem(GetLoc("menu.resources", "Resources"), ResourcesRender);

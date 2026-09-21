@@ -15,13 +15,13 @@ namespace SkillMenuAPI {
     struct Interface {
         uint32_t interfaceVersion;
 
-        // Retorna o nível atual de uma skill customizada
+        // Retorna o nível atual de uma skill registrada, custom ou vanilla.
         int (*GetCustomSkillLevel)(const char* skillId);
 
-        // Adiciona XP a uma skill customizada e trata o Level Up
+        // Adiciona XP a uma skill registrada e trata o Level Up.
         void (*AddCustomSkillXP)(const char* skillId, float xpAmount);
 
-        // Retorna a quantidade de XP atual da barra
+        // Retorna a quantidade de XP atual da barra.
         float (*GetCustomSkillXP)(const char* skillId);
 
         float (*GetSkillFormulaValue)(const char* skillId, int valueType);
@@ -65,7 +65,7 @@ namespace SkillMenuAPI {
         SkillListView (*GetAvailableSkills)();
         SkillListView (*GetAvailableResources)();
 
-        // V5 additions: modify the actor's base custom-skill level, not its bonus.
+        // V5 additions: modify the actor's registered base skill level, not its bonus.
         void (*ModCustomSkillLevelForActor)(RE::FormID actorFormID, const char* skillId, int amount);
         void (*SetCustomSkillLevelForActor)(RE::FormID actorFormID, const char* skillId, int level);
     };

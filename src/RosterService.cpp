@@ -15,6 +15,9 @@ namespace
 
     RE::TESFaction* ResolveFaction(std::string_view value)
     {
+        if (auto form = RE::TESForm::LookupByEditorID(value)) {
+            if (auto faction = form->As<RE::TESFaction>()) return faction;
+        }
         auto tokens = Split(value, '|');
         if (tokens.size() != 2) return nullptr;
         try {
@@ -28,6 +31,23 @@ namespace
         catch (...) {
             return nullptr;
         }
+    }
+
+    RE::TESFaction* ResolveFaction(const nlohmann::json& value)
+    {
+        if (value.is_string()) {
+            return ResolveFaction(std::string_view(value.get_ref<const std::string&>()));
+        }
+        if (!value.is_object()) return nullptr;
+        const auto editorID = value.find("editorID");
+        if (editorID != value.end() && editorID->is_string() && !editorID->empty()) {
+            if (auto form = RE::TESForm::LookupByEditorID(editorID->get<std::string>())) {
+                if (auto faction = form->As<RE::TESFaction>()) return faction;
+            }
+        }
+        const auto fallback = value.find("form");
+        return fallback != value.end() && fallback->is_string() ?
+            ResolveFaction(std::string_view(fallback->get_ref<const std::string&>())) : nullptr;
     }
 
     std::vector<RE::TESFaction*> ResolveFactions(
@@ -44,16 +64,17 @@ namespace
             nlohmann::json::array());
         if (configured.is_array()) {
             for (const auto& value : configured) {
-                if (!value.is_string()) continue;
-                if (auto faction = ResolveFaction(value.get<std::string>())) {
+                if (auto faction = ResolveFaction(value)) {
                     factions.push_back(faction);
                 }
             }
         }
-        if (auto vanilla = ResolveFaction(vanillaFallback);
-            vanilla &&
-            std::ranges::find(factions, vanilla) == factions.end()) {
-            factions.push_back(vanilla);
+        if (!vanillaFallback.empty()) {
+            if (auto vanilla = ResolveFaction(vanillaFallback);
+                vanilla &&
+                std::ranges::find(factions, vanilla) == factions.end()) {
+                factions.push_back(vanilla);
+            }
         }
         return factions;
     }
@@ -84,7 +105,6 @@ namespace
         bool isHighProcess,
         bool currentFollower,
         bool potentialFollower,
-        bool humanoid,
         bool accepted,
         std::string_view reason)
     {
@@ -97,13 +117,12 @@ namespace
         }
         const auto lifeState = actor->GetLifeState();
         const auto diagnostic = fmt::format(
-            "{}|{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}",
             isHighProcess,
             static_cast<std::uint32_t>(lifeState),
             actor->IsPlayerTeammate(),
             currentFollower,
             potentialFollower,
-            humanoid,
             accepted,
             reason);
         static std::unordered_map<RE::FormID, std::string> previous;
@@ -114,7 +133,7 @@ namespace
         logger::info(
             "[CompanionFilter]{} name='{}' actor={:08X} highProcess={} "
             "lifeState={} teammate={} currentFollower={} potentialFollower={} "
-            "humanoid={} commanded={} commander={:08X} summoned={} accepted={} reason={}",
+            "commanded={} commander={:08X} summoned={} accepted={} reason={}",
             IsLydia(actor) ? "[LYDIA]" : "",
             actor->GetName(),
             actor->GetFormID(),
@@ -123,7 +142,6 @@ namespace
             actor->IsPlayerTeammate(),
             currentFollower,
             potentialFollower,
-            humanoid,
             actor->IsCommandedActor(),
             commander ? commander->GetFormID() : 0,
             actor->IsSummoned(),
@@ -149,21 +167,19 @@ bool RosterService::IsActiveCompanion(
         settings,
         "potentialFollowerFactions",
         "Skyrim.esm|5C84D");
+    const auto excludedFactions = ResolveFactions(
+        settings,
+        "excludedFollowerFactions",
+        "");
     const bool currentFollower = InAnyFaction(actor, currentFactions);
     const bool potentialFollower = InAnyFaction(actor, potentialFactions);
-
-    static auto actorTypeNPC =
-        RE::TESDataHandler::GetSingleton()->LookupForm<RE::BGSKeyword>(
-            0x00013794,
-            "Skyrim.esm");
-    auto race = actor->GetRace();
-    const bool humanoid = race && actorTypeNPC && race->HasKeyword(actorTypeNPC);
+    const bool excluded = InAnyFaction(actor, excludedFactions);
 
     auto detection = settings.value(
         "followerDetection",
         nlohmann::json::object());
-    const bool allowHumanoidTeammates =
-        detection.value("allowHumanoidTeammates", true);
+    const bool allowPlayerTeammates =
+        detection.value("allowPlayerTeammates", true);
     const bool allowSummoned =
         detection.value("allowSummoned", false);
 
@@ -177,6 +193,7 @@ bool RosterService::IsActiveCompanion(
     if (!isHighProcess) reason = "not_in_high_process";
     else if (dead) reason = "dead_life_state";
     else if (actor->IsDisabled()) reason = "disabled";
+    else if (excluded) reason = "excluded_faction";
     else if (actor->IsSummoned() && !allowSummoned) reason = "summoned";
     else if (currentFollower) {
         accepted = true;
@@ -186,9 +203,9 @@ bool RosterService::IsActiveCompanion(
         accepted = true;
         reason = "teammate_and_potential_follower";
     }
-    else if (actor->IsPlayerTeammate() && humanoid && allowHumanoidTeammates) {
+    else if (actor->IsPlayerTeammate() && allowPlayerTeammates) {
         accepted = true;
-        reason = "humanoid_teammate_framework_fallback";
+        reason = "player_teammate";
     }
     else if (actor->IsPlayerTeammate()) {
         reason = "teammate_not_allowed";
@@ -199,7 +216,6 @@ bool RosterService::IsActiveCompanion(
         isHighProcess,
         currentFollower,
         potentialFollower,
-        humanoid,
         accepted,
         reason);
     return accepted;

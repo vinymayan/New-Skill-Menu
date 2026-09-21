@@ -134,6 +134,7 @@ interface SkillTreeData {
 interface PlayerData {
     id: string;
     ruleKey?: string;
+    baseRuleKey?: string;
     kind?: 'player' | 'follower';
     name: string;
     health: { current: number; max: number };
@@ -146,6 +147,8 @@ interface PlayerData {
     race?: string;
     dragonSouls?: number;
     pendingLevelUps?: number;
+    levelUpBusy?: boolean;
+    levelUpSyncFailed?: boolean;
     firstPendingLevel?: number;
     isLevelUpMenuOpen?: boolean;
     resourceValues?: Record<string, number>;
@@ -154,6 +157,7 @@ interface PlayerData {
 interface ActorSummary {
     id: string;
     ruleKey: string;
+    baseRuleKey?: string;
     name: string;
     race: string;
     level: number;
@@ -583,10 +587,10 @@ function getEffectiveSettings(settings: SettingsData, rules: LevelRule[], target
         if (scope === 'all') return true;
         if (scope === 'player') return actor.kind === 'player';
         if (scope === 'followers') return actor.kind === 'follower';
-        return scope === 'actor' && rule.actorKey === actor.ruleKey;
+        return scope === 'actor' && !!rule.actorKey && (rule.actorKey === actor.ruleKey || rule.actorKey === actor.baseRuleKey);
     });
     const specificity = (rule: LevelRule) =>
-        rule.scope === 'actor' ? 30 :
+        rule.scope === 'actor' ? (rule.actorKey === actor.ruleKey ? 30 : 25) :
             rule.scope === 'all' ? 10 : 20;
     const sortedRules = matchingRules.sort((a, b) =>
         specificity(a) - specificity(b) || a.level - b.level);
@@ -3251,7 +3255,7 @@ const LevelUpModal = ({ trees, settings, rules, uiSettings, actor, actors, curre
     actor: PlayerData,
     actors: ActorSummary[],
     currentLevel: number, firstPendingLevel?: number, pendingLevelUps: number,
-    onSelect: (payload: any) => void,
+    onSelect: (payload: any) => boolean,
     onActorSelect: (actorId: string) => void
 }) => {
     const [allocations, setAllocations] = useState<Record<string, number>>({});
@@ -3259,6 +3263,11 @@ const LevelUpModal = ({ trees, settings, rules, uiSettings, actor, actors, curre
     const [activeCategory, setActiveCategory] = useState<string>("All");
     const [attributePage, setAttributePage] = useState(0);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [recoveryStatus, setRecoveryStatus] = useState<'idle' | 'checking' | 'busy' | 'retry' | 'unverified' | 'syncFailed'>('idle');
+    const requestIdRef = useRef('');
+    const retrySafeRef = useRef(false);
+    const processTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const checkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [switchingActorId, setSwitchingActorId] = useState<string | null>(null);
 
     const categories = settings?.categories || ["All", "Combat", "Magic", "Stealth", "Special", "Custom"];
@@ -3328,11 +3337,56 @@ const LevelUpModal = ({ trees, settings, rules, uiSettings, actor, actors, curre
         setAttributePage(page => Math.min(page, attributePageCount - 1));
     }, [attributePageCount]);
 
+    const checkLevelUpStatus = useCallback(() => {
+        if (processTimerRef.current) clearTimeout(processTimerRef.current);
+        if (checkTimerRef.current) clearTimeout(checkTimerRef.current);
+        setIsProcessing(false);
+        setRecoveryStatus('checking');
+        if (typeof (window as any).requestSkills !== 'function') {
+            setRecoveryStatus('unverified');
+            return;
+        }
+        checkTimerRef.current = setTimeout(() => setRecoveryStatus('unverified'), 5000);
+        (window as any).requestSkills('');
+    }, []);
+
+    useEffect(() => {
+        const onResult = (event: Event) => {
+            const result = (event as CustomEvent).detail;
+            if (result?.requestId === requestIdRef.current && result.success === false) {
+                retrySafeRef.current = result.retrySafe === true;
+                checkLevelUpStatus();
+            }
+        };
+        const onUpdate = (event: Event) => {
+            if (!requestIdRef.current || !checkTimerRef.current) return;
+            const player = (event as CustomEvent).detail?.player as PlayerData | undefined;
+            if (!player || player.id !== actor.id) return;
+            clearTimeout(checkTimerRef.current);
+            checkTimerRef.current = null;
+            if ((player.pendingLevelUps || 0) < pendingLevelUps) return;
+            setRecoveryStatus(player.levelUpBusy ? 'busy' : player.levelUpSyncFailed ? 'syncFailed' : retrySafeRef.current ? 'retry' : 'unverified');
+        };
+        window.addEventListener('levelUpResult', onResult);
+        window.addEventListener('updateSkills', onUpdate);
+        return () => {
+            window.removeEventListener('levelUpResult', onResult);
+            window.removeEventListener('updateSkills', onUpdate);
+            if (processTimerRef.current) clearTimeout(processTimerRef.current);
+            if (checkTimerRef.current) clearTimeout(checkTimerRef.current);
+        };
+    }, [actor.id, pendingLevelUps, checkLevelUpStatus]);
+
     const handleConfirm = () => {
-        if (!canConfirm || isProcessing) return;
+        if (!canConfirm || isProcessing || (recoveryStatus !== 'idle' && recoveryStatus !== 'retry')) return;
 
         setIsProcessing(true);
-        onSelect({
+        setRecoveryStatus('idle');
+        requestIdRef.current = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        retrySafeRef.current = false;
+        processTimerRef.current = setTimeout(checkLevelUpStatus, 15000);
+        const submitted = onSelect({
+            requestId: requestIdRef.current,
             actorId: actor.id,
             levelUps: levelsToProcess.map(l => ({
                 level: l.level,
@@ -3340,6 +3394,11 @@ const LevelUpModal = ({ trees, settings, rules, uiSettings, actor, actors, curre
             })),
             skills: allocations
         });
+        if (!submitted) {
+            if (processTimerRef.current) clearTimeout(processTimerRef.current);
+            setIsProcessing(false);
+            setRecoveryStatus('unverified');
+        }
     };
 
     const filteredTrees = useMemo(() => {
@@ -3608,10 +3667,20 @@ const LevelUpModal = ({ trees, settings, rules, uiSettings, actor, actors, curre
                 </div>
 
                 <div className="modal-actions level-up-actions">
+                    {recoveryStatus !== 'idle' && (
+                        <div className="level-up-recovery" role="status">
+                            <span>{t(`level_up.status_${recoveryStatus}`)}</span>
+                            {(recoveryStatus === 'busy' || recoveryStatus === 'unverified' || recoveryStatus === 'syncFailed') && (
+                                <button type="button" onClick={checkLevelUpStatus} data-level-up-action>
+                                    {t('level_up.check_status')}
+                                </button>
+                            )}
+                        </div>
+                    )}
                     <button
-                        className={`modal-btn yes-btn ${(!canConfirm || isProcessing) ? 'disabled-btn' : ''}`}
+                        className={`modal-btn yes-btn ${(!canConfirm || isProcessing || !['idle', 'retry'].includes(recoveryStatus)) ? 'disabled-btn' : ''}`}
                         onClick={handleConfirm}
-                        disabled={!canConfirm || isProcessing || Boolean(switchingActorId)}
+                        disabled={!canConfirm || isProcessing || Boolean(switchingActorId) || !['idle', 'retry'].includes(recoveryStatus)}
                         data-level-up-action
                     >
                         {isProcessing ? t('common.processing') : t('level_up.confirm_btn')}
@@ -4492,10 +4561,12 @@ function App() {
     const handleAttributeSelect = useCallback((payload: any) => {
         console.log("[PrismaUI] Enviando payload de Level Up para o plugin C++:", payload);
 
-        playSound('UISkillIncreaseSD');
         if (typeof (window as any).chooseAttribute === 'function') {
+            playSound('UISkillIncreaseSD');
             (window as any).chooseAttribute(JSON.stringify({ ...payload, session: (window as any).nsmSession, actorId: payload.actorId || playerData?.id }));
+            return true;
         }
+        return false;
     }, [playerData?.id]);
 
     const handleUnlockPerkConfirm = useCallback(() => {

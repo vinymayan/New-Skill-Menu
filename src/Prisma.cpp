@@ -19,6 +19,7 @@ using json = nlohmann::json;
 PRISMA_UI_API::IVPrismaUI1* PrismaUI = nullptr;
 static PrismaView view;
 static bool isVisible = false;
+static bool g_pauseMenu = true;
 
 static json g_mergedLocCache;
 static bool g_locLoaded = false;
@@ -35,6 +36,7 @@ namespace {
     }
 
     void ScheduleFreezeTimer() {
+        if (!g_pauseMenu) return;
         std::lock_guard lock(g_freezeTimerMutex);
         g_freezeTimer = std::jthread([](std::stop_token stopToken) {
             std::mutex waitMutex;
@@ -44,7 +46,7 @@ namespace {
             if (stopToken.stop_requested()) return;
 
             SKSE::GetTaskInterface()->AddUITask([stopToken]() {
-                if (stopToken.stop_requested() || !isVisible) return;
+                if (stopToken.stop_requested() || !isVisible || !g_pauseMenu) return;
                 const auto ui = RE::UI::GetSingleton();
                 const auto focusMenu = ui ? ui->GetMenu("PrismaUI_FocusMenu") : nullptr;
                 if (focusMenu) {
@@ -865,7 +867,7 @@ void SyncExternalSkillLevel(const std::string& skillId, const std::string& globa
 
     int currentLevel = mgr->GetCustomSkillLevel(player, skillId);
     if (externalLevel > currentLevel) {
-        logger::info("Sincronizando Nivel '{}': Prisma({}) -> Global({})", skillId, currentLevel, externalLevel);
+        logger::debug("Sincronizando Nivel '{}': Prisma({}) -> Global({})", skillId, currentLevel, externalLevel);
         mgr->SetCustomSkillLevel(player, skillId, externalLevel);
         mgr->SetCustomSkillXP(player, skillId, 0.0f);
     }
@@ -1775,9 +1777,11 @@ json GetSettings() {
         }},
         {"followerDetection", {
             {"enabled", true},
+            {"skillXPAdvancesLevel", false},
             {"currentFollowerFactions", json::array()},
             {"potentialFollowerFactions", json::array()},
-            {"allowHumanoidTeammates", true},
+            {"excludedFollowerFactions", json::array()},
+            {"allowPlayerTeammates", true},
             {"allowSummoned", false}
         }},
         {"categories", {"Combat", "Magic", "Stealth", "Special", "Custom"}},
@@ -1814,6 +1818,7 @@ json GetSettings() {
                         }
                     }
                 }
+                loadedSettings["followerDetection"].erase("allowHumanoidTeammates");
 
                 g_settingsCache = loadedSettings;
                 g_settingsLoaded = true;
@@ -1841,7 +1846,11 @@ static int GetRuleSpecificity(const json& rule, RE::Actor* actor) {
     if (scope == "player") return actor && actor->IsPlayerRef() ? 20 : -1;
     if (scope == "followers") return actor && !actor->IsPlayerRef() ? 20 : -1;
     if (scope == "actor") {
-        return actor && rule.value("actorKey", "") == ActorRuleKey(actor) ? 30 : -1;
+        if (!actor) return -1;
+        const auto key = rule.value("actorKey", "");
+        if (key.empty()) return -1;
+        if (key == ActorRuleKey(actor)) return 30;
+        return key == ActorIdentityService::BaseRuleKey(actor->GetActorBase()) ? 25 : -1;
     }
     return -1;
 }
@@ -2033,6 +2042,7 @@ json GetUISettings() {
         {"hideLockedTreeNames", true},
         {"hideLockedTreeBG", false},
         {"performanceMode", false},
+        {"doNotPauseMenu", false},
         {"columnPreviewMode", "full"},
         {"enableEditorMode", false},
         {"hidePerkNames", false},
@@ -2157,7 +2167,7 @@ std::string GetPlayerSkillsJSON() {
         float spCur = avOwner->GetActorValue(RE::ActorValue::kStamina);
         float spMax = actor->GetActorValueMax(RE::ActorValue::kStamina);
         int perkPoints = mgr->GetActorPerkPoints(actor);
-        int playerLevel = actor->GetLevel();
+        int playerLevel = mgr->GetActorProgressionLevel(actor);
         int realPlayerLevel = player->GetLevel();
         int dragonSouls = actor->IsPlayerRef() ?
             static_cast<int>(avOwner->GetActorValue(RE::ActorValue::kDragonSouls)) : 0;
@@ -2181,6 +2191,9 @@ std::string GetPlayerSkillsJSON() {
                 playerLevelProgress = std::clamp(playerLevelProgress, 0.0f, 100.0f);
             }
         }
+        else if (!actor->IsPlayerRef()) {
+            playerLevelProgress = mgr->GetActorLevelProgress(actor);
+        }
         std::string raceName = "Unknown";
         if (auto race = actor->GetRace()) {
             raceName = race->GetFullName();
@@ -2189,6 +2202,7 @@ std::string GetPlayerSkillsJSON() {
         json playerData = {
             {"id", ActorRuntimeKey(actor)},
             {"ruleKey", ActorRuleKey(actor)},
+            {"baseRuleKey", ActorIdentityService::BaseRuleKey(actor->GetActorBase())},
             {"kind", actor->IsPlayerRef() ? "player" : "follower"},
             {"name", playerName},
             {"health", {{"current", hpCur}, {"max", hpMax}}},
@@ -2201,6 +2215,8 @@ std::string GetPlayerSkillsJSON() {
             {"dragonSouls", dragonSouls},
             {"title", actor->IsPlayerRef() ? "Dragonborn" : "Companion"},
             {"pendingLevelUps", mgr->GetPendingLevelUps(actor)},
+            {"levelUpBusy", FollowerDistribution::Busy(actor)},
+            {"levelUpSyncFailed", FollowerDistribution::Failed(actor)},
             {"firstPendingLevel", mgr->GetFirstPendingLevel(actor)},
             {"isLevelUpMenuOpen", actor->IsPlayerRef() && Prisma::IsLevelUpMenuOpen()},
             {"resourceValues", resourceValuesMap},
@@ -2313,6 +2329,15 @@ std::string GetPlayerSkillsJSON() {
                                     progressPercent = std::clamp(calcProgress, 0.0f, 100.0f);
                                 }
                             }
+                        }
+                    }
+                    else if (!actor->IsPlayerRef()) {
+                        const float currentXP = mgr->GetCustomSkillXP(actor, skillName);
+                        const int progressionSkillLevel = mgr->GetCustomSkillTotalLevel(actor, skillName);
+                        const float requiredXP = mgr->GetRequiredXP(skillName, progressionSkillLevel);
+                        if (requiredXP > 0.0f) {
+                            const float calculated = currentXP / requiredXP * 100.0f;
+                            if (std::isfinite(calculated)) progressPercent = std::clamp(calculated, 0.0f, 100.0f);
                         }
                     }
                 }
@@ -2866,6 +2891,7 @@ std::string GetPlayerSkillsJSON() {
                 selectableRace = race->GetFullName();
             }
             auto summary = SnapshotService::BuildActorSummary(selectableActor);
+            summary["level"] = mgr->GetActorProgressionLevel(selectableActor);
             summary["race"] = selectableRace;
             summary["pendingLevelUps"] =
                 mgr->GetPendingLevelUps(selectableActor);
@@ -2943,7 +2969,7 @@ void Prisma::SendUpdateToUI() {
 
 void Prisma::NotifySkillIncrease() {
     SKSE::GetTaskInterface()->AddUITask([]() {
-        if (!PrismaUI || !createdView || !isVisible) return;
+        if (!PrismaUI || !createdView || !isVisible || !g_pauseMenu) return;
         const auto ui = RE::UI::GetSingleton();
         const auto focusMenu = ui ? ui->GetMenu("PrismaUI_FocusMenu") : nullptr;
         if (focusMenu) {
@@ -2973,8 +2999,8 @@ static void RedeemCodeFromUI(const char* args) {
 
                     if (codeObj.contains("rewards")) {
                         auto rw = codeObj["rewards"];
-                        const auto effective =
-                            GetEffectiveSettings(actor->GetLevel(), actor);
+                        const auto effective = GetEffectiveSettings(
+                            Manager::GetSingleton()->GetActorProgressionLevel(actor), actor);
                         if (rw.contains("perkPoints")) {
                             Manager::GetSingleton()->ModActorPerkPoints(
                                 actor,
@@ -3142,28 +3168,41 @@ static void UnlockPerkFromUI(const char* args)
     }
 }
 
+static void RejectLevelUp(const std::string& requestId, const char* reason, bool retrySafe = true) {
+    logger::warn("[LevelUp] Request {} rejected: {}", requestId, reason);
+    if (requestId.empty() || !PrismaUI || !Prisma::createdView) return;
+    const json detail = {{"requestId", requestId}, {"success", false}, {"retrySafe", retrySafe}};
+    const std::string script = "window.dispatchEvent(new CustomEvent('levelUpResult', { detail: " + detail.dump() + " }));";
+    PrismaUI->Invoke(view, script.c_str());
+}
+
 static void ChooseAttributeFromUI(const char* args, bool distributed = false) {
     if (!args) return;
+    std::string requestId;
+    bool mutationStarted = distributed;
     try {
         json payload = json::parse(args);
+        requestId = payload.value("requestId", "");
+        const auto reject = [&](const char* reason) { RejectLevelUp(requestId, reason, !mutationStarted); };
         json levelUpsArray = payload.value("levelUps", json::array());
         json skillsMap = payload.value("skills", json::object());
 
         auto actor = distributed ? RE::TESForm::LookupByID<RE::Actor>(
             static_cast<RE::FormID>(std::stoul(payload.at("actorId").get<std::string>(), nullptr, 16))) :
             ResolveSelectableActorFromPayload(payload);
-        if (!actor) return;
+        if (!actor) { reject("actor unavailable or stale session"); return; }
         if (!distributed && actor->GetFormID() != g_selectedActorID) {
             logger::warn(
                 "[LevelUp] Rejected allocation for non-selected actor {:08X}.",
                 actor->GetFormID());
+            reject("actor is not selected");
             return;
         }
 
         auto mgr = Manager::GetSingleton();
         const int requestedLevelUps = static_cast<int>(levelUpsArray.size());
         const int pendingBefore = mgr->GetPendingLevelUps(actor);
-        if (requestedLevelUps <= 0 || requestedLevelUps > pendingBefore) return;
+        if (requestedLevelUps <= 0 || requestedLevelUps > pendingBefore) { reject("pending levels changed"); return; }
 
         const int firstRewardLevel = mgr->GetFirstPendingLevel(actor);
         if (!distributed) {
@@ -3194,27 +3233,29 @@ static void ChooseAttributeFromUI(const char* args, bool distributed = false) {
 
         int requestedSkillPoints = 0;
         for (auto& [skillName, amountVal] : skillsMap.items()) {
-            if (!amountVal.is_number_integer()) return;
+            if (!amountVal.is_number_integer()) { reject("invalid skill allocation"); return; }
             const int amount = amountVal.get<int>();
-            if (amount < 0) return;
+            if (amount < 0) { reject("negative skill allocation"); return; }
             const auto tree = allocatableTrees.find(skillName);
             if (amount > 0 && (tree == allocatableTrees.end() || !tree->second)) {
                 logger::warn(
                     "[LevelUp] Rejected allocation in locked or unavailable tree '{}' for actor {:08X}.",
                     skillName,
                     actor->GetFormID());
+                reject("skill tree is locked or unavailable");
                 return;
             }
             requestedSkillPoints += amount;
         }
-        if (requestedSkillPoints > std::min(allowedSkillPoints, allowedSpend)) return;
+        if (requestedSkillPoints > std::min(allowedSkillPoints, allowedSpend)) { reject("skill point budget changed"); return; }
         }
 
         for (const auto& level : levelUpsArray) {
             const auto attribute = level.value("attribute", "");
-            if (attribute != "Health" && attribute != "Magicka" && attribute != "Stamina") return;
+            if (attribute != "Health" && attribute != "Magicka" && attribute != "Stamina") { reject("invalid attribute"); return; }
         }
-        if (FollowerDistribution::Busy(actor)) return;
+        if (FollowerDistribution::Failed(actor)) { reject("distribution reconciliation pending"); return; }
+        if (FollowerDistribution::Busy(actor)) { reject("distribution is busy"); return; }
         if (!actor->IsPlayerRef() && !distributed) {
             auto values = FollowerDistribution::Contributions(actor);
             int index = 0;
@@ -3239,8 +3280,11 @@ static void ChooseAttributeFromUI(const char* args, bool distributed = false) {
             payload["actorId"] = ActorRuntimeKey(actor);
             const std::string copied = payload.dump();
             if (!FollowerDistribution::Apply(actor, FollowerDistribution::Purchased(actor), std::move(values),
-                [copied](bool ok) { if (ok) ChooseAttributeFromUI(copied.c_str(), true); }))
-                logger::warn("[LevelUp] Distribution unavailable");
+                [copied, requestId](bool ok) {
+                    if (ok) ChooseAttributeFromUI(copied.c_str(), true);
+                    else RejectLevelUp(requestId, "distribution failed", false);
+                }))
+                reject("distribution unavailable");
             return;
         }
 
@@ -3253,13 +3297,14 @@ static void ChooseAttributeFromUI(const char* args, bool distributed = false) {
             levelUpsArray.size(),
             actor->GetName(),
             actor->GetFormID());
+        mutationStarted = true;
 
         // 1. Processa Atributos para cada nível pendente escolhido
         int levelIndex = 0;
         for (auto& lvlUp : levelUpsArray) {
             int lvl = firstRewardLevel + levelIndex++;
             std::string attribute = lvlUp.value("attribute", "");
-            if (attribute != "Health" && attribute != "Magicka" && attribute != "Stamina") return;
+            if (attribute != "Health" && attribute != "Magicka" && attribute != "Stamina") { reject("invalid attribute during apply"); return; }
             auto playerBase = actor->GetActorBase();
             if (actor->IsPlayerRef() && playerBase) {
                 playerBase->actorData.level += 1;
@@ -3372,6 +3417,7 @@ static void ChooseAttributeFromUI(const char* args, bool distributed = false) {
     }
     catch (const std::exception& e) {
         logger::error("Erro ao aplicar level up em lote: {}", e.what());
+        RejectLevelUp(requestId, "exception while applying level up", !mutationStarted);
     }
 }
 
@@ -3494,7 +3540,8 @@ static void LegendarySkillFromUI(const char* args) {
             return;
         }
 
-        const auto effective = GetEffectiveSettings(actor->GetLevel(), actor);
+        const auto effective = GetEffectiveSettings(
+            Manager::GetSingleton()->GetActorProgressionLevel(actor), actor);
         if (!actor->IsPlayerRef()) {
             auto values = FollowerDistribution::Contributions(actor);
             const auto av = GetActorValueFromName(treeName);
@@ -3571,7 +3618,8 @@ static void ResetAllPerksFromUI(const char* args) {
 
         logger::debug("[ResetAll] Iniciando remocao de TODOS os perks...");
 
-        const auto effective = GetEffectiveSettings(actor->GetLevel(), actor);
+        const auto effective = GetEffectiveSettings(
+            Manager::GetSingleton()->GetActorProgressionLevel(actor), actor);
         const auto resetResult = ResetService::Execute(
             actor,
             {},
@@ -3609,6 +3657,7 @@ void Prisma::Show() {
     }
 
     if (isVisible) return;
+    g_pauseMenu = !GetUISettings().value("doNotPauseMenu", false);
 
     if (!createdView) {
         logger::debug("Criando nova View para o Prisma...");
@@ -3803,14 +3852,14 @@ void Prisma::Show() {
             PrismaUI->RegisterJSListener(currentView, "saveSettings", [](const char* args) { SaveSettingsFromUI(args); });
             PrismaUI->RegisterJSListener(currentView, "saveUISettings", [](const char* args) { SaveUISettingsFromUI(args); });
             SendUpdateToUI();
-            PrismaUI->Focus(currentView, true);
+            PrismaUI->Focus(currentView, g_pauseMenu);
             });
     }
     else {
         logger::debug("Reexibindo View existente.");
         PrismaUI->Show(view);
         SendUpdateToUI();
-        PrismaUI->Focus(view, true);
+        PrismaUI->Focus(view, g_pauseMenu);
     }
 
     //RE::UIBlurManager::GetSingleton()->IncrementBlurCount();
@@ -3866,8 +3915,10 @@ void Prisma::Hide() {
         if (ui) {
             auto focusMenu = ui->GetMenu("PrismaUI_FocusMenu");
             if (focusMenu) {
-                focusMenu->menuFlags.reset(RE::UI_MENU_FLAGS::kFreezeFrameBackground,
-                                           RE::UI_MENU_FLAGS::kTopmostRenderedMenu);
+                if (g_pauseMenu) {
+                    focusMenu->menuFlags.reset(RE::UI_MENU_FLAGS::kFreezeFrameBackground);
+                }
+                focusMenu->menuFlags.reset(RE::UI_MENU_FLAGS::kTopmostRenderedMenu);
             }
         }
         if (ShouldTriggerMouseMode()) {

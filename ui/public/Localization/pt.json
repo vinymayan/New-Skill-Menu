@@ -217,6 +217,12 @@
     "allocate": "ALOCAR HABILIDADES ({points} RESTANTES)",
     "choose_attr": "ESCOLHER ATRIBUTO",
     "confirm_btn": "CONFIRMAR NÍVEL",
+    "status_checking": "A resposta demorou. Conferindo o estado do ator antes de permitir outra tentativa...",
+    "status_busy": "A distribuição ainda está em andamento. Confira novamente em alguns instantes.",
+    "status_retry": "O nível continua pendente. Revise suas escolhas e tente novamente.",
+    "status_unverified": "Resultado incerto: não repita o level-up sem conferir o log ou recarregar o save.",
+    "status_syncFailed": "Falha na sincronização dos ganhos do follower. Não repita o level-up; recarregue o save para reconciliar.",
+    "check_status": "CONFERIR ESTADO",
     "cap_reached": "Limite de Habilidade Atingido",
     "cw_bonus_tooltip": "+{amount} de Capacidade de Carga",
     "select_attributes": "SELECIONE OS ATRIBUTOS"

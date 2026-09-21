@@ -3431,6 +3431,26 @@ body {
     color: var(--nsm-primary-text);
 }
 
+.level-up-recovery {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+    color: var(--nsm-primary-text, #eee);
+    font-size: 0.9rem;
+    text-align: center;
+}
+
+.level-up-recovery button {
+    border: 1px solid currentColor;
+    background: transparent;
+    color: inherit;
+    padding: 6px 12px;
+    cursor: pointer;
+}
+
 .resource-item span:last-child {
     flex: 0 0 auto;
 }

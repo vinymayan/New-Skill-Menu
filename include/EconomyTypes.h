@@ -27,6 +27,7 @@ struct ActorProgressState
     int lastObservedLevel = 0;
     int highestRewardedLevel = 0;
     int pendingLevelUps = 0;
+    float skillLevelXP = 0.0f;
     int resetCount = 0;
     std::map<RE::FormID, PerkPurchaseRecord> purchasedPerks;
 };

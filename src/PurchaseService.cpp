@@ -1,4 +1,4 @@
-#include "FollowerDistribution.h"
+﻿#include "FollowerDistribution.h"
 #include "PurchaseService.h"
 
 #include "Manager.h"
@@ -59,7 +59,7 @@ PurchaseService::Result PurchaseService::Purchase(
         perkPointCost,
         paidResources);
 
-    logger::info(
+    logger::debug(
         "[Economy] Purchase committed actor='{}' actorID={:08X} perk={:08X} "
         "pointsBefore={} pointsPaid={} pointsAfter={} customResources={}",
         actor->GetName(),

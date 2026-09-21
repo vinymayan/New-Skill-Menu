@@ -106,6 +106,8 @@ public:
     bool SpendActorPerkPoints(RE::Actor* actor, int amount);
     void ModActorPerkPoints(RE::Actor* actor, int amount, int maximum = 1000000);
     int GetPendingLevelUps(RE::Actor* actor);
+    int GetActorProgressionLevel(RE::Actor* actor);
+    float GetActorLevelProgress(RE::Actor* actor);
     void QueuePendingLevelUps(RE::Actor* actor, int amount);
     void QueuePendingLevelUpsThrough(RE::Actor* actor, int targetLevel);
     int GetFirstPendingLevel(RE::Actor* actor);
@@ -153,4 +155,5 @@ private:
     RE::FormID GetActorXPKey(RE::Actor* actor) const;
     float GetActorXP(RE::Actor* actor, const std::string& skillId);
     void SetActorXP(RE::Actor* actor, const std::string& skillId, float xp);
+    void AddFollowerSkillLevelXP(RE::Actor* actor, const CustomSkill& skill, const std::vector<int>& gainedLevels);
 };

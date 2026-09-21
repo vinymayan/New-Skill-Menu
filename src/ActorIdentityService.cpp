@@ -72,3 +72,12 @@ std::string ActorIdentityService::RuleKey(RE::Actor* actor)
     }
     return RuntimeKey(actor);
 }
+
+std::string ActorIdentityService::BaseRuleKey(RE::TESNPC* actorBase)
+{
+    if (!actorBase) return {};
+    if (auto key = FormKey(actorBase); !key.empty()) return "base:" + key;
+    if (auto editorID = actorBase->GetFormEditorID(); editorID && *editorID)
+        return "base:" + std::string(editorID);
+    return "base:" + fmt::format("{:08X}", actorBase->GetFormID());
+}
